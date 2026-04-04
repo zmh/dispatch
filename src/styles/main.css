@@ -303,6 +303,22 @@ body {
   background: var(--bg-selected);
 }
 
+.message-row.checked {
+  background: var(--bg-hover);
+}
+
+.message-row.checked.selected {
+  background: var(--bg-selected);
+}
+
+.msg-check {
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 8px;
+  color: var(--accent);
+}
+
 .msg-star {
   width: 16px;
   text-align: center;

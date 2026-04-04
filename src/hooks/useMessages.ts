@@ -30,6 +30,7 @@ export function useMessages() {
   const [counts, setCounts] = useState<MessageCounts>({ counts: {} });
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
@@ -85,13 +86,31 @@ export function useMessages() {
     await fetchMessages();
   }, [fetchMessages]);
 
+  const doArchiveMany = useCallback(async (ids: string[]) => {
+    for (const id of ids) await archiveMessage(id);
+    setSelectedIds(new Set());
+    await fetchMessages();
+  }, [fetchMessages]);
+
   const doSnooze = useCallback(async (id: string, until: number) => {
     await snoozeMessage(id, until);
     await fetchMessages();
   }, [fetchMessages]);
 
+  const doSnoozeMany = useCallback(async (ids: string[], until: number) => {
+    for (const id of ids) await snoozeMessage(id, until);
+    setSelectedIds(new Set());
+    await fetchMessages();
+  }, [fetchMessages]);
+
   const doStar = useCallback(async (id: string) => {
     await starMessage(id);
+    await fetchMessages();
+  }, [fetchMessages]);
+
+  const doStarMany = useCallback(async (ids: string[]) => {
+    for (const id of ids) await starMessage(id);
+    setSelectedIds(new Set());
     await fetchMessages();
   }, [fetchMessages]);
 
@@ -104,9 +123,32 @@ export function useMessages() {
     }
   }, []);
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const addToSelection = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
   const switchTab = useCallback((newTab: string) => {
     setTab(newTab);
     setSelectedIndex(0);
+    setSelectedIds(new Set());
   }, []);
 
   const cycleTab = useCallback(() => {
@@ -116,6 +158,7 @@ export function useMessages() {
       return categories[next].name;
     });
     setSelectedIndex(0);
+    setSelectedIds(new Set());
   }, [categories]);
 
   const moveSelection = useCallback((delta: number) => {
@@ -153,6 +196,7 @@ export function useMessages() {
     counts,
     categories,
     selectedIndex,
+    selectedIds,
     loading,
     refreshing,
     lastRefreshResult,
@@ -160,10 +204,16 @@ export function useMessages() {
     switchTab,
     cycleTab,
     moveSelection,
+    toggleSelect,
+    addToSelection,
+    clearSelection,
     doRefresh,
     doArchive,
+    doArchiveMany,
     doSnooze,
+    doSnoozeMany,
     doStar,
+    doStarMany,
     doOpenLink,
     fetchMessages,
     loadCategories,

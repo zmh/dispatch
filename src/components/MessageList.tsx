@@ -5,6 +5,7 @@ import { MessageRow } from "./MessageRow";
 interface MessageListProps {
   messages: Message[];
   selectedIndex: number;
+  selectedIds: Set<string>;
   loading: boolean;
   onSelect: (index: number) => void;
   onOpen: (url: string) => void;
@@ -14,6 +15,7 @@ interface MessageListProps {
 export function MessageList({
   messages,
   selectedIndex,
+  selectedIds,
   loading,
   onSelect,
   onOpen,
@@ -52,6 +54,7 @@ export function MessageList({
           key={msg.id}
           message={msg}
           selected={i === selectedIndex}
+          checked={selectedIds.has(msg.id)}
           onClick={() => onSelect(i)}
           onDoubleClick={() => msg.permalink && onOpen(msg.permalink)}
         />

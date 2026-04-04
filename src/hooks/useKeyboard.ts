@@ -4,6 +4,7 @@ import { Message, Category } from "../lib/tauri";
 interface UseKeyboardProps {
   messages: Message[];
   selectedIndex: number;
+  selectedIds: Set<string>;
   categories: Category[];
   showSettings: boolean;
   showSnooze: boolean;
@@ -11,17 +12,24 @@ interface UseKeyboardProps {
   setShowSnooze: (v: boolean) => void;
   setShowShortcuts: (v: boolean | ((prev: boolean) => boolean)) => void;
   moveSelection: (delta: number) => void;
+  toggleSelect: (id: string) => void;
+  addToSelection: (id: string) => void;
+  clearSelection: () => void;
   switchTab: (tab: string) => void;
   cycleTab: () => void;
   doArchive: (id: string) => Promise<void>;
+  doArchiveMany: (ids: string[]) => Promise<void>;
   doStar: (id: string) => Promise<void>;
+  doStarMany: (ids: string[]) => Promise<void>;
   doOpenLink: (url: string) => Promise<void>;
   doRefresh: () => Promise<void>;
+  setShowSnoozeForSelected: () => void;
 }
 
 export function useKeyboard({
   messages,
   selectedIndex,
+  selectedIds,
   categories,
   showSettings,
   showSnooze,
@@ -29,12 +37,18 @@ export function useKeyboard({
   setShowSnooze,
   setShowShortcuts,
   moveSelection,
+  toggleSelect,
+  addToSelection,
+  clearSelection,
   switchTab,
   cycleTab,
   doArchive,
+  doArchiveMany,
   doStar,
+  doStarMany,
   doOpenLink,
   doRefresh,
+  setShowSnoozeForSelected,
 }: UseKeyboardProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -54,6 +68,7 @@ export function useKeyboard({
         setShowSettings(false);
         setShowSnooze(false);
         setShowShortcuts(false);
+        if (selectedIds.size > 0) clearSelection();
         return;
       }
 
@@ -62,37 +77,78 @@ export function useKeyboard({
 
       const selected = messages[selectedIndex];
 
+      // Helper: get action targets (selected IDs if multi-selected, else cursor message)
+      const getActionIds = (): string[] => {
+        if (selectedIds.size > 0) return Array.from(selectedIds);
+        if (selected) return [selected.id];
+        return [];
+      };
+
       switch (e.key) {
         case "j":
         case "ArrowDown":
           e.preventDefault();
-          moveSelection(1);
+          if (e.shiftKey) {
+            if (selected) addToSelection(selected.id);
+            moveSelection(1);
+            const nextIdx = Math.min(selectedIndex + 1, messages.length - 1);
+            const nextMsg = messages[nextIdx];
+            if (nextMsg) addToSelection(nextMsg.id);
+          } else {
+            moveSelection(1);
+          }
           break;
         case "k":
         case "ArrowUp":
           e.preventDefault();
-          moveSelection(-1);
-          break;
-        case "e":
-          if (selected) {
-            e.preventDefault();
-            doArchive(selected.id);
+          if (e.shiftKey) {
+            if (selected) addToSelection(selected.id);
+            moveSelection(-1);
+            const prevIdx = Math.max(selectedIndex - 1, 0);
+            const prevMsg = messages[prevIdx];
+            if (prevMsg) addToSelection(prevMsg.id);
+          } else {
+            moveSelection(-1);
           }
           break;
-        case "s":
+        case "x":
           if (selected) {
             e.preventDefault();
-            doStar(selected.id);
+            toggleSelect(selected.id);
           }
           break;
-        case "h":
-          if (selected) {
+        case "e": {
+          const ids = getActionIds();
+          if (ids.length > 0) {
             e.preventDefault();
-            setShowSnooze(true);
+            doArchiveMany(ids);
           }
           break;
+        }
+        case "s": {
+          const ids = getActionIds();
+          if (ids.length > 0) {
+            e.preventDefault();
+            doStarMany(ids);
+          }
+          break;
+        }
+        case "h": {
+          const ids = getActionIds();
+          if (ids.length > 0) {
+            e.preventDefault();
+            setShowSnoozeForSelected();
+          }
+          break;
+        }
         case "Enter":
-          if (selected?.permalink) {
+          if (selectedIds.size > 0) {
+            e.preventDefault();
+            for (const id of selectedIds) {
+              const msg = messages.find(m => m.id === id);
+              if (msg?.permalink) doOpenLink(msg.permalink);
+            }
+          } else if (selected?.permalink) {
             e.preventDefault();
             doOpenLink(selected.permalink);
           }
@@ -124,19 +180,26 @@ export function useKeyboard({
     [
       messages,
       selectedIndex,
+      selectedIds,
       categories,
       showSettings,
       showSnooze,
       moveSelection,
+      toggleSelect,
+      addToSelection,
+      clearSelection,
       switchTab,
       cycleTab,
       doArchive,
+      doArchiveMany,
       doStar,
+      doStarMany,
       doOpenLink,
       doRefresh,
       setShowSettings,
       setShowSnooze,
       setShowShortcuts,
+      setShowSnoozeForSelected,
     ]
   );
 
