@@ -134,6 +134,50 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn get_starred_messages(&self) -> Result<Vec<Message>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                 FROM messages
+                 WHERE starred = 1
+                 ORDER BY timestamp DESC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let messages = stmt
+            .query_map([], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    sender: row.get(2)?,
+                    subject: row.get(3)?,
+                    body: row.get(4)?,
+                    body_html: row.get(5)?,
+                    permalink: row.get(6)?,
+                    timestamp: row.get(7)?,
+                    classification: row.get(8)?,
+                    status: row.get(9)?,
+                    starred: row.get::<_, i32>(10)? != 0,
+                    snoozed_until: row.get(11)?,
+                    created_at: row.get(12)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(messages)
+    }
+
+    pub fn get_starred_count(&self) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let count: usize = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE starred = 1", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
     pub fn get_message_counts(&self, status: &str) -> Result<MessageCounts, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
 
@@ -154,6 +198,12 @@ impl Database {
             let (classification, count) = row.map_err(|e| e.to_string())?;
             counts.insert(classification, count);
         }
+
+        // Add starred count (across all statuses)
+        let starred_count: usize = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE starred = 1", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        counts.insert("starred".to_string(), starred_count);
 
         Ok(MessageCounts { counts })
     }

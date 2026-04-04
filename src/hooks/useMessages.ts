@@ -4,6 +4,7 @@ import {
   MessageCounts,
   Category,
   getMessages,
+  getStarredMessages,
   getMessageCounts,
   getSettings,
   refreshInbox,
@@ -13,6 +14,8 @@ import {
   openLink,
   RefreshResult,
 } from "../lib/tauri";
+
+const STARRED_CATEGORY: Category = { name: "starred", builtin: true, position: 0.5 };
 
 const DEFAULT_CATEGORIES: Category[] = [
   { name: "important", builtin: true, position: 0 },
@@ -39,7 +42,9 @@ export function useMessages() {
     try {
       const settings = await getSettings();
       const cats = settings.categories ?? DEFAULT_CATEGORIES;
-      setCategories(cats.sort((a, b) => a.position - b.position));
+      // Inject the built-in Starred category after Important
+      const withStarred = [...cats.filter(c => c.name !== "starred"), STARRED_CATEGORY];
+      setCategories(withStarred.sort((a, b) => a.position - b.position));
       // Apply theme/font on load
       applyTheme(settings.theme || "dark", settings.font || "system");
     } catch (e) {
@@ -51,7 +56,7 @@ export function useMessages() {
     setLoading(true);
     try {
       const [msgs, cts] = await Promise.all([
-        getMessages(tab, "inbox"),
+        tab === "starred" ? getStarredMessages() : getMessages(tab, "inbox"),
         getMessageCounts("inbox"),
       ]);
       setMessages(msgs);
