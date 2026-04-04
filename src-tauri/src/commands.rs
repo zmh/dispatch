@@ -1,0 +1,337 @@
+use std::sync::Arc;
+use tauri::State;
+
+use crate::classifier;
+use crate::models::{
+    Category, CategoryRule, Message, MessageCounts, RefreshResult, Settings, SlackCacheStatus,
+    SlackChannel, SlackUser,
+};
+use crate::slack;
+use crate::storage::Database;
+
+pub struct AppState {
+    pub db: Arc<Database>,
+}
+
+/// Apply rules to unclassified messages. Returns how many were classified by rules.
+fn apply_rules(
+    db: &Database,
+    categories: &[Category],
+    rules: &[CategoryRule],
+) -> Result<usize, String> {
+    let unclassified = db.get_unclassified_messages()?;
+    if unclassified.is_empty() || rules.is_empty() {
+        return Ok(0);
+    }
+
+    let mut classified = 0;
+
+    // Sort categories by position — check rules for earlier categories first.
+    // "other" (the last category) never has rules, it's the catch-all.
+    let mut sorted_cats: Vec<&Category> = categories.iter().collect();
+    sorted_cats.sort_by_key(|c| c.position);
+
+    for msg in &unclassified {
+        let mut matched_category: Option<&str> = None;
+
+        'outer: for cat in &sorted_cats {
+            if cat.name == "other" {
+                continue; // other is catch-all, skip
+            }
+            for rule in rules {
+                if rule.category != cat.name {
+                    continue;
+                }
+                let matches = match rule.rule_type.as_str() {
+                    "keyword" => msg.body.to_lowercase().contains(&rule.value.to_lowercase()),
+                    "sender" => msg.sender.to_lowercase() == rule.value.to_lowercase(),
+                    "channel" => {
+                        msg.subject
+                            .as_deref()
+                            .map(|s| s.to_lowercase() == rule.value.to_lowercase())
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                };
+                if matches {
+                    matched_category = Some(&cat.name);
+                    break 'outer;
+                }
+            }
+        }
+
+        if let Some(category) = matched_category {
+            db.update_classification(&msg.id, category)?;
+            classified += 1;
+        }
+    }
+
+    Ok(classified)
+}
+
+#[tauri::command]
+pub async fn get_messages(
+    state: State<'_, AppState>,
+    classification: String,
+    status: String,
+) -> Result<Vec<Message>, String> {
+    state.db.get_messages(&classification, &status)
+}
+
+#[tauri::command]
+pub async fn get_message_counts(
+    state: State<'_, AppState>,
+    status: String,
+) -> Result<MessageCounts, String> {
+    state.db.get_message_counts(&status)
+}
+
+#[tauri::command]
+pub async fn refresh_inbox(state: State<'_, AppState>) -> Result<RefreshResult, String> {
+    let settings = state.db.get_settings()?;
+    let mut result = RefreshResult {
+        new_messages: 0,
+        classified: 0,
+        errors: vec![],
+    };
+
+    // Fetch from Slack
+    if let (Some(ref token), Some(ref cookie)) = (&settings.slack_token, &settings.slack_cookie) {
+        let filters = settings.slack_filters.as_deref();
+        match slack::fetch_slack_messages(token, cookie, filters).await {
+            Ok(messages) => {
+                for msg in &messages {
+                    if state.db.insert_message(msg)? {
+                        result.new_messages += 1;
+                    }
+                }
+            }
+            Err(e) => result.errors.push(format!("Slack: {}", e)),
+        }
+    } else {
+        result.errors.push("Slack credentials not configured".to_string());
+    }
+
+    // Step 1: Apply rules to unclassified messages
+    let categories = settings.effective_categories();
+    let rules = settings.effective_rules();
+    match apply_rules(&state.db, &categories, &rules) {
+        Ok(n) => result.classified += n,
+        Err(e) => result.errors.push(format!("Rules: {}", e)),
+    }
+
+    // Step 2: AI classification for remaining unclassified
+    let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
+
+    if let Some(ref api_key) = settings.claude_api_key {
+        let unclassified = state.db.get_unclassified_messages()?;
+        if !unclassified.is_empty() {
+            let user_prompt = settings
+                .classification_prompt
+                .as_deref()
+                .unwrap_or("Classify each message as 'important' or 'other'.");
+
+            let categories_str = category_names.join(", ");
+            let system_prompt = format!(
+                "You are a message classifier for a CEO's inbox. Classify each message into one of these categories: {}\n\nClassification criteria:\n{}\n\nRespond with ONLY a JSON array.",
+                categories_str, user_prompt
+            );
+
+            match classifier::classify_messages(api_key, &system_prompt, &unclassified, &category_names).await {
+                Ok(classifications) => {
+                    for (id, class) in &classifications {
+                        state.db.update_classification(id, class)?;
+                        result.classified += 1;
+                    }
+                }
+                Err(e) => result.errors.push(format!("Classifier: {}", e)),
+            }
+        }
+    } else {
+        // No API key: default classify as "other"
+        let unclassified = state.db.get_unclassified_messages()?;
+        for msg in &unclassified {
+            state.db.update_classification(&msg.id, "other")?;
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn archive_message(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.db.archive_message(&id)
+}
+
+#[tauri::command]
+pub async fn snooze_message(
+    state: State<'_, AppState>,
+    id: String,
+    until: i64,
+) -> Result<(), String> {
+    state.db.snooze_message(&id, until)
+}
+
+#[tauri::command]
+pub async fn star_message(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    state.db.toggle_star(&id)
+}
+
+/// Convert a Slack permalink (https://workspace.slack.com/archives/C.../p...)
+/// into a slack:// deep link that opens directly in the Slack desktop app.
+fn slack_permalink_to_deeplink(url: &str, team_id: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let segments: Vec<&str> = parsed.path_segments()?.collect();
+
+    // Expected: ["archives", "<channel_id>", "p<timestamp>"]
+    if segments.len() < 3 || segments[0] != "archives" {
+        return None;
+    }
+
+    let channel_id = segments[1];
+    let ts_raw = segments[2].strip_prefix('p')?;
+
+    // Slack timestamps: "1234567890123456" -> "1234567890.123456" (dot 6 from end)
+    if ts_raw.len() <= 6 {
+        return None;
+    }
+    let (secs, micros) = ts_raw.split_at(ts_raw.len() - 6);
+    let message_ts = format!("{}.{}", secs, micros);
+
+    // Check for thread_ts in query params
+    let thread_ts = parsed
+        .query_pairs()
+        .find(|(k, _)| k == "thread_ts")
+        .map(|(_, v)| v.to_string());
+
+    let mut deep = format!(
+        "slack://channel?team={}&id={}&message={}",
+        team_id, channel_id, message_ts
+    );
+    if let Some(tts) = thread_ts {
+        deep.push_str(&format!("&thread_ts={}", tts));
+    }
+    Some(deep)
+}
+
+/// Get team_id, using cached value from DB or fetching from Slack API.
+async fn get_or_fetch_team_id(db: &crate::storage::Database) -> Result<String, String> {
+    // Check cache first
+    if let Some(cached) = db.get_setting("slack_team_id")? {
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
+    }
+
+    // Fetch from API
+    let settings = db.get_settings()?;
+    let token = settings
+        .slack_token
+        .as_deref()
+        .ok_or("Slack token not configured")?;
+    let cookie = settings
+        .slack_cookie
+        .as_deref()
+        .ok_or("Slack cookie not configured")?;
+
+    let team_id = slack::get_team_id(token, cookie).await?;
+    db.set_setting("slack_team_id", &team_id)?;
+    Ok(team_id)
+}
+
+#[tauri::command]
+pub async fn open_link(
+    state: State<'_, AppState>,
+    url: String,
+    use_slack_app: bool,
+) -> Result<(), String> {
+    if use_slack_app {
+        let team_id = get_or_fetch_team_id(&state.db).await.unwrap_or_default();
+        let link = slack_permalink_to_deeplink(&url, &team_id)
+            .unwrap_or_else(|| url.clone());
+        open::that(&link).map_err(|e| e.to_string())
+    } else {
+        open::that(&url).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
+    state.db.get_settings()
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<(), String> {
+    state.db.save_settings(&settings)
+}
+
+#[tauri::command]
+pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCacheStatus, String> {
+    let settings = state.db.get_settings()?;
+    let token = settings
+        .slack_token
+        .as_deref()
+        .ok_or("Slack token not configured")?
+        .to_string();
+    let cookie = settings
+        .slack_cookie
+        .as_deref()
+        .ok_or("Slack cookie not configured")?
+        .to_string();
+
+    // Only load channels into cache (users are searched live via API)
+    state.db.clear_slack_cache()?;
+
+    let db = state.db.clone();
+    slack::fetch_slack_channels_paged(&token, &cookie, |page| {
+        db.append_slack_channels(page)
+    }).await?;
+
+    state.db.slack_cache_count()
+}
+
+#[tauri::command]
+pub async fn search_slack_users(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<SlackUser>, String> {
+    // Search Slack API directly — no cache needed for users
+    let settings = state.db.get_settings()?;
+    let token = settings
+        .slack_token
+        .as_deref()
+        .ok_or("Slack token not configured")?;
+    let cookie = settings
+        .slack_cookie
+        .as_deref()
+        .ok_or("Slack cookie not configured")?;
+    slack::search_users_live(token, cookie, &query).await
+}
+
+#[tauri::command]
+pub async fn search_slack_channels(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<SlackChannel>, String> {
+    // Search Slack API directly for channels (searches ALL channels, not just member channels)
+    let settings = state.db.get_settings()?;
+    let token = settings
+        .slack_token
+        .as_deref()
+        .ok_or("Slack token not configured")?;
+    let cookie = settings
+        .slack_cookie
+        .as_deref()
+        .ok_or("Slack cookie not configured")?;
+    slack::search_channels_live(token, cookie, &query).await
+}
+
+#[tauri::command]
+pub async fn get_slack_cache_status(
+    state: State<'_, AppState>,
+) -> Result<SlackCacheStatus, String> {
+    state.db.slack_cache_count()
+}

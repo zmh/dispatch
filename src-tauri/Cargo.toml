@@ -1,0 +1,31 @@
+[package]
+name = "haystack"
+version = "0.1.0"
+description = "CEO Inbox - Aggregated message triage"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "haystack_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+scraper = "0.18"
+tokio = { version = "1", features = ["full"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+open = "5"
+dirs-next = "2"
+url = "2"
+cocoa = "0.26"
+objc = "0.2"
