@@ -340,3 +340,21 @@ pub async fn get_slack_cache_status(
 ) -> Result<SlackCacheStatus, String> {
     state.db.slack_cache_count()
 }
+
+#[tauri::command]
+pub async fn set_window_theme(
+    app: tauri::AppHandle,
+    theme: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main window not found")?;
+    let tauri_theme = match theme.as_str() {
+        "light" | "solarized-light" => Some(tauri::Theme::Light),
+        _ => Some(tauri::Theme::Dark),
+    };
+    window
+        .set_theme(tauri_theme)
+        .map_err(|e| e.to_string())
+}

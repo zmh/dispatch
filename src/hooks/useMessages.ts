@@ -13,6 +13,7 @@ import {
   starMessage,
   openLink,
   RefreshResult,
+  setWindowTheme,
 } from "../lib/tauri";
 
 const STARRED_CATEGORY: Category = { name: "starred", builtin: true, position: 0.5 };
@@ -25,6 +26,7 @@ const DEFAULT_CATEGORIES: Category[] = [
 export function applyTheme(theme: string, font: string) {
   document.documentElement.setAttribute("data-theme", theme);
   document.documentElement.setAttribute("data-font", font);
+  setWindowTheme(theme).catch(console.error);
 }
 
 export function useMessages() {

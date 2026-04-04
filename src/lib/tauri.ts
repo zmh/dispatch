@@ -130,3 +130,7 @@ export async function searchSlackChannels(query: string): Promise<SlackChannel[]
 export async function getSlackCacheStatus(): Promise<SlackCacheStatus> {
   return invoke("get_slack_cache_status");
 }
+
+export async function setWindowTheme(theme: string): Promise<void> {
+  return invoke("set_window_theme", { theme });
+}
