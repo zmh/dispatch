@@ -57,6 +57,7 @@ export interface Settings {
   category_rules: CategoryRule[] | null;
   theme: string | null;
   font: string | null;
+  font_size: string | null;
   open_in_slack_app: boolean | null;
 }
 
