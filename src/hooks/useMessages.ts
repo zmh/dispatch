@@ -36,6 +36,7 @@ export function useMessages() {
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
@@ -148,8 +149,19 @@ export function useMessages() {
     });
   }, []);
 
+  const selectRange = useCallback((anchor: number, current: number) => {
+    const start = Math.min(anchor, current);
+    const end = Math.max(anchor, current);
+    const ids = new Set<string>();
+    for (let i = start; i <= end; i++) {
+      if (messages[i]) ids.add(messages[i].id);
+    }
+    setSelectedIds(ids);
+  }, [messages]);
+
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
   }, []);
 
   const selectAll = useCallback(() => {
@@ -208,15 +220,18 @@ export function useMessages() {
     categories,
     selectedIndex,
     selectedIds,
+    selectionAnchor,
     loading,
     refreshing,
     lastRefreshResult,
     setSelectedIndex,
+    setSelectionAnchor,
     switchTab,
     cycleTab,
     moveSelection,
     toggleSelect,
     addToSelection,
+    selectRange,
     clearSelection,
     selectAll,
     doRefresh,

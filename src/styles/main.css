@@ -295,19 +295,9 @@ body {
   overflow: hidden;
 }
 
-.message-row:hover {
-  background: var(--bg-hover);
-}
-
-.message-row.selected {
-  background: var(--bg-selected);
-}
-
+.message-row:hover,
+.message-row.selected,
 .message-row.checked {
-  background: var(--bg-hover);
-}
-
-.message-row.checked.selected {
   background: var(--bg-selected);
 }
 

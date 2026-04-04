@@ -5,6 +5,7 @@ interface UseKeyboardProps {
   messages: Message[];
   selectedIndex: number;
   selectedIds: Set<string>;
+  selectionAnchor: number | null;
   categories: Category[];
   showSettings: boolean;
   showSnooze: boolean;
@@ -14,6 +15,8 @@ interface UseKeyboardProps {
   moveSelection: (delta: number) => void;
   toggleSelect: (id: string) => void;
   addToSelection: (id: string) => void;
+  selectRange: (anchor: number, current: number) => void;
+  setSelectionAnchor: (anchor: number | null) => void;
   clearSelection: () => void;
   selectAll: () => void;
   switchTab: (tab: string) => void;
@@ -31,6 +34,7 @@ export function useKeyboard({
   messages,
   selectedIndex,
   selectedIds,
+  selectionAnchor,
   categories,
   showSettings,
   showSnooze,
@@ -40,6 +44,8 @@ export function useKeyboard({
   moveSelection,
   toggleSelect,
   addToSelection,
+  selectRange,
+  setSelectionAnchor,
   clearSelection,
   selectAll,
   switchTab,
@@ -98,11 +104,11 @@ export function useKeyboard({
         case "ArrowDown":
           e.preventDefault();
           if (e.shiftKey) {
-            if (selected) addToSelection(selected.id);
-            moveSelection(1);
+            const anchor = selectionAnchor ?? selectedIndex;
+            if (selectionAnchor === null) setSelectionAnchor(selectedIndex);
             const nextIdx = Math.min(selectedIndex + 1, messages.length - 1);
-            const nextMsg = messages[nextIdx];
-            if (nextMsg) addToSelection(nextMsg.id);
+            moveSelection(1);
+            selectRange(anchor, nextIdx);
           } else {
             moveSelection(1);
           }
@@ -111,11 +117,11 @@ export function useKeyboard({
         case "ArrowUp":
           e.preventDefault();
           if (e.shiftKey) {
-            if (selected) addToSelection(selected.id);
-            moveSelection(-1);
+            const anchor = selectionAnchor ?? selectedIndex;
+            if (selectionAnchor === null) setSelectionAnchor(selectedIndex);
             const prevIdx = Math.max(selectedIndex - 1, 0);
-            const prevMsg = messages[prevIdx];
-            if (prevMsg) addToSelection(prevMsg.id);
+            moveSelection(-1);
+            selectRange(anchor, prevIdx);
           } else {
             moveSelection(-1);
           }
@@ -190,12 +196,15 @@ export function useKeyboard({
       messages,
       selectedIndex,
       selectedIds,
+      selectionAnchor,
       categories,
       showSettings,
       showSnooze,
       moveSelection,
       toggleSelect,
       addToSelection,
+      selectRange,
+      setSelectionAnchor,
       clearSelection,
       selectAll,
       switchTab,
