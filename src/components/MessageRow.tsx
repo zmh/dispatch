@@ -3,6 +3,7 @@ import { Message } from "../lib/tauri";
 interface MessageRowProps {
   message: Message;
   selected: boolean;
+  checked: boolean;
   onClick: () => void;
   onDoubleClick: () => void;
 }
@@ -23,17 +24,24 @@ function truncateText(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + "…";
 }
 
-export function MessageRow({ message, selected, onClick, onDoubleClick }: MessageRowProps) {
+export function MessageRow({ message, selected, checked, onClick, onDoubleClick }: MessageRowProps) {
   const source = message.subject
     ? `#${message.subject}`
     : message.source;
 
+  const className = [
+    "message-row",
+    selected ? "selected" : "",
+    checked ? "checked" : "",
+  ].filter(Boolean).join(" ");
+
   return (
     <div
-      className={`message-row ${selected ? "selected" : ""}`}
+      className={className}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
+      <span className="msg-check">{checked ? "●" : ""}</span>
       <span className="msg-star">{message.starred ? "★" : " "}</span>
       <span className="msg-source">{source}</span>
       <span className="msg-dot">·</span>

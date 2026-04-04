@@ -15,6 +15,7 @@ function App() {
     counts,
     categories,
     selectedIndex,
+    selectedIds,
     loading,
     refreshing,
     lastRefreshResult,
@@ -22,10 +23,16 @@ function App() {
     switchTab,
     cycleTab,
     moveSelection,
+    toggleSelect,
+    addToSelection,
+    clearSelection,
     doRefresh,
     doArchive,
+    doArchiveMany,
     doSnooze,
+    doSnoozeMany,
     doStar,
+    doStarMany,
     doOpenLink,
     loadCategories,
   } = useMessages();
@@ -72,9 +79,15 @@ function App() {
     document.body.style.userSelect = "none";
   }, [panelWidth]);
 
+  const setShowSnoozeForSelected = useCallback(() => {
+    const hasTargets = selectedIds.size > 0 || messages[selectedIndex];
+    if (hasTargets) setShowSnooze(true);
+  }, [selectedIds, messages, selectedIndex]);
+
   useKeyboard({
     messages,
     selectedIndex,
+    selectedIds,
     categories,
     showSettings,
     showSnooze,
@@ -82,18 +95,27 @@ function App() {
     setShowSnooze,
     setShowShortcuts,
     moveSelection,
+    toggleSelect,
+    addToSelection,
+    clearSelection,
     switchTab,
     cycleTab,
     doArchive,
+    doArchiveMany,
     doStar,
+    doStarMany,
     doOpenLink,
     doRefresh,
+    setShowSnoozeForSelected,
   });
 
   const selectedMessage = messages[selectedIndex];
 
   const handleSnooze = async (until: number) => {
-    if (selectedMessage) {
+    if (selectedIds.size > 0) {
+      await doSnoozeMany(Array.from(selectedIds), until);
+      setShowSnooze(false);
+    } else if (selectedMessage) {
       await doSnooze(selectedMessage.id, until);
       setShowSnooze(false);
     }
@@ -115,6 +137,7 @@ function App() {
         <MessageList
           messages={messages}
           selectedIndex={selectedIndex}
+          selectedIds={selectedIds}
           loading={loading}
           onSelect={setSelectedIndex}
           onOpen={doOpenLink}
@@ -134,6 +157,7 @@ function App() {
           </span>
         )}
         <span className="shortcut-bar-spacer" />
+        <span className="shortcut"><kbd>x</kbd> select</span>
         <span className="shortcut"><kbd>e</kbd> archive</span>
         <span className="shortcut"><kbd>h</kbd> snooze</span>
         <span className="shortcut"><kbd>s</kbd> star</span>
@@ -164,6 +188,8 @@ function App() {
             <div className="shortcuts-list">
               <div className="shortcut-row"><kbd>j</kbd> / <kbd>↓</kbd><span>Move down</span></div>
               <div className="shortcut-row"><kbd>k</kbd> / <kbd>↑</kbd><span>Move up</span></div>
+              <div className="shortcut-row"><kbd>x</kbd><span>Toggle select</span></div>
+              <div className="shortcut-row"><kbd>⇧↓</kbd> / <kbd>⇧↑</kbd><span>Extend selection</span></div>
               <div className="shortcut-row"><kbd>e</kbd><span>Archive message</span></div>
               <div className="shortcut-row"><kbd>h</kbd><span>Snooze message</span></div>
               <div className="shortcut-row"><kbd>s</kbd><span>Toggle star</span></div>
