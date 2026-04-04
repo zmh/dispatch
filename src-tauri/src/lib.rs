@@ -104,6 +104,7 @@ pub fn run() {
             commands::search_slack_users,
             commands::search_slack_channels,
             commands::get_slack_cache_status,
+            commands::set_window_theme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
