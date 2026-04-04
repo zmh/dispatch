@@ -373,252 +373,272 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
       >
         <div className="settings-titlebar">
           <button className="settings-close" onClick={onClose} title="Close" />
-          <span className="settings-titlebar-text">Settings</span>
+          <span className="settings-titlebar-text">General</span>
         </div>
 
         <div className="settings-form settings-scrollable">
-          {/* Appearance */}
-          <div className="settings-section-native">
-            <div className="settings-section-header">Appearance</div>
-            <div className="appearance-section">
-              <div className="appearance-group-label">Theme</div>
-              <div className="theme-picker">
-                {THEMES.map((t) => (
-                  <button
-                    key={t.key}
-                    className={`theme-swatch ${currentTheme === t.key ? "active" : ""}`}
-                    onClick={() => setTheme(t.key)}
-                    title={t.label}
-                  >
-                    <div className="swatch-preview">
-                      <div className="swatch-bg" style={{ background: t.bg }} />
-                      <div className="swatch-surface" style={{ background: t.surface }} />
-                      <div className="swatch-accent" style={{ background: t.accent }} />
-                    </div>
-                    <span className="swatch-label">{t.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="appearance-group-label">Font</div>
-              <div className="font-picker">
-                {FONTS.map((f) => (
-                  <button
-                    key={f.key}
-                    className={`font-btn ${f.className} ${currentFont === f.key ? "active" : ""}`}
-                    onClick={() => setFont(f.key)}
-                  >
-                    {f.label}
-                  </button>
-                ))}
+          {/* Appearance group */}
+          <div className="settings-group">
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Theme:</span>
+              <div className="settings-row-control">
+                <div className="theme-picker">
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.key}
+                      className={`theme-swatch ${currentTheme === t.key ? "active" : ""}`}
+                      onClick={() => setTheme(t.key)}
+                      title={t.label}
+                    >
+                      <div className="swatch-preview">
+                        <div className="swatch-bg" style={{ background: t.bg }} />
+                        <div className="swatch-surface" style={{ background: t.surface }} />
+                        <div className="swatch-accent" style={{ background: t.accent }} />
+                      </div>
+                      <span className="swatch-label">{t.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Behavior */}
-          <div className="settings-section-native">
-            <div className="settings-section-header">Behavior</div>
-            <label className="settings-toggle-row">
-              <span>Open links directly in Slack app</span>
-              <input
-                type="checkbox"
-                checked={settings.open_in_slack_app ?? false}
-                onChange={(e) =>
-                  setSettings({ ...settings, open_in_slack_app: e.target.checked })
-                }
-              />
-            </label>
-          </div>
-
-          {/* Credentials */}
-          <div className="settings-section-native">
-            <div className="settings-section-header">Credentials</div>
-            <label className="settings-label">
-              <span className="settings-label-text">Slack Token (xoxc-...)</span>
-              <input
-                type="password"
-                className="settings-input"
-                value={settings.slack_token || ""}
-                onChange={(e) =>
-                  setSettings({ ...settings, slack_token: e.target.value || null })
-                }
-                placeholder="xoxc-..."
-              />
-            </label>
-
-            <label className="settings-label">
-              <span className="settings-label-text">Slack Cookie (d=...)</span>
-              <input
-                type="password"
-                className="settings-input"
-                value={settings.slack_cookie || ""}
-                onChange={(e) =>
-                  setSettings({ ...settings, slack_cookie: e.target.value || null })
-                }
-                placeholder="xoxd-..."
-              />
-            </label>
-
-            <label className="settings-label">
-              <span className="settings-label-text">Claude API Key</span>
-              <input
-                type="password"
-                className="settings-input"
-                value={settings.claude_api_key || ""}
-                onChange={(e) =>
-                  setSettings({ ...settings, claude_api_key: e.target.value || null })
-                }
-                placeholder="sk-ant-..."
-              />
-            </label>
-
-            <label className="settings-label">
-              <span className="settings-label-text">Classification Prompt</span>
-              <textarea
-                className="settings-textarea"
-                value={settings.classification_prompt || ""}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    classification_prompt: e.target.value || null,
-                  })
-                }
-                rows={3}
-                placeholder="Instructions for Claude to classify messages..."
-              />
-            </label>
-          </div>
-
-          {/* Source Filters */}
-          <div className="settings-section-native">
-            <div className="settings-section-header">Source Filters</div>
-            <div className="settings-section-hint">
-              Type <kbd>@</kbd> for people, <kbd>#</kbd> for channels, <kbd>to:</kbd> for directed messages. <code>to:me</code> is included automatically.
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Font:</span>
+              <div className="settings-row-control">
+                <div className="font-picker">
+                  {FONTS.map((f) => (
+                    <button
+                      key={f.key}
+                      className={`font-btn ${f.className} ${currentFont === f.key ? "active" : ""}`}
+                      onClick={() => setFont(f.key)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            <div className="filter-chips">
-              {filters.map((f) => (
-                <span key={f.id} className="filter-chip">
-                  {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
-                  {f.display_name}
-                  <button
-                    className="chip-remove"
-                    onClick={() => removeFilter(f.id)}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            <TypeaheadInput
-              placeholder="@person, #channel, or to:someone..."
-              onSelect={addFilter}
-            />
-
-            <div className="cache-status">
-              <span className="cache-status-text">Type @name to search people, #channel for channels, to:value for directed messages.</span>
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Behavior:</span>
+              <div className="settings-row-control">
+                <label className="settings-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.open_in_slack_app ?? false}
+                    onChange={(e) =>
+                      setSettings({ ...settings, open_in_slack_app: e.target.checked })
+                    }
+                  />
+                  Open links directly in Slack app
+                </label>
+              </div>
             </div>
           </div>
 
-          {/* Categories & Rules */}
-          <div className="settings-section-native">
-            <div className="settings-section-header">Categories & Rules</div>
-
-            <div className="category-list">
-              {sortedCategories.map((cat) => {
-                const catRules = rules
-                  .map((r, i) => ({ ...r, _idx: i }))
-                  .filter((r) => r.category === cat.name);
-                const isOther = cat.name === "other";
-
-                return (
-                  <div key={cat.name} className="category-item">
-                    <div className="category-header">
-                      <span className="category-name">
-                        {cat.name.charAt(0).toUpperCase() + cat.name.slice(1)}
-                        {cat.builtin && (
-                          <span className="category-builtin"> (built-in)</span>
-                        )}
-                      </span>
-                      {!cat.builtin && (
-                        <button
-                          className="category-delete"
-                          onClick={() => removeCategory(cat.name)}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-
-                    {isOther ? (
-                      <div className="category-catchall">Catch-all for unmatched messages</div>
-                    ) : (
-                      <>
-                        {catRules.length > 0 && (
-                          <div className="rule-list">
-                            {catRules.map((rule) => (
-                              <div key={rule._idx} className="rule-item">
-                                <span className="rule-type">{rule.rule_type}</span>
-                                <span className="rule-value">{rule.value}</span>
-                                <button
-                                  className="rule-remove"
-                                  onClick={() => removeRule(rule._idx)}
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="rule-add">
-                          <TypeaheadInput
-                            placeholder="@sender, #channel, or keyword..."
-                            onSelect={(item) => addRuleFromTypeahead(cat.name, item)}
-                          />
-                          <div className="rule-keyword-add">
-                            <input
-                              type="text"
-                              className="settings-input rule-keyword-input"
-                              value={ruleInputs[cat.name] || ""}
-                              onChange={(e) =>
-                                setRuleInputs({
-                                  ...ruleInputs,
-                                  [cat.name]: e.target.value,
-                                })
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  addRule(cat.name);
-                                }
-                              }}
-                              placeholder="keyword (press Enter)"
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="category-add">
-              <input
-                type="text"
-                className="settings-input"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addCategory();
+          {/* Credentials group */}
+          <div className="settings-group">
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Slack token:</span>
+              <div className="settings-row-control">
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={settings.slack_token || ""}
+                  onChange={(e) =>
+                    setSettings({ ...settings, slack_token: e.target.value || null })
                   }
-                }}
-                placeholder="New category name (press Enter)"
-              />
+                  placeholder="xoxc-..."
+                />
+              </div>
+            </div>
+
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Slack cookie:</span>
+              <div className="settings-row-control">
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={settings.slack_cookie || ""}
+                  onChange={(e) =>
+                    setSettings({ ...settings, slack_cookie: e.target.value || null })
+                  }
+                  placeholder="xoxd-..."
+                />
+              </div>
+            </div>
+
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Claude API key:</span>
+              <div className="settings-row-control">
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={settings.claude_api_key || ""}
+                  onChange={(e) =>
+                    setSettings({ ...settings, claude_api_key: e.target.value || null })
+                  }
+                  placeholder="sk-ant-..."
+                />
+              </div>
+            </div>
+
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Classifier:</span>
+              <div className="settings-row-control">
+                <textarea
+                  className="settings-textarea"
+                  value={settings.classification_prompt || ""}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      classification_prompt: e.target.value || null,
+                    })
+                  }
+                  rows={3}
+                  placeholder="Instructions for Claude to classify messages..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Source Filters group */}
+          <div className="settings-group">
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Source filters:</span>
+              <div className="settings-row-control">
+                <div className="filter-chips">
+                  {filters.map((f) => (
+                    <span key={f.id} className="filter-chip">
+                      {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
+                      {f.display_name}
+                      <button
+                        className="chip-remove"
+                        onClick={() => removeFilter(f.id)}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                <TypeaheadInput
+                  placeholder="@person, #channel, or to:someone..."
+                  onSelect={addFilter}
+                />
+
+                <div className="settings-hint-text">
+                  Type <kbd>@</kbd> for people, <kbd>#</kbd> for channels, or <kbd>to:</kbd> for directed messages. <code>to:me</code> is included automatically.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Categories & Rules group */}
+          <div className="settings-group">
+            <div className="settings-row-ia settings-row-ia-top">
+              <span className="settings-row-label">Categories:</span>
+              <div className="settings-row-control">
+                <div className="category-list">
+                  {sortedCategories.map((cat) => {
+                    const catRules = rules
+                      .map((r, i) => ({ ...r, _idx: i }))
+                      .filter((r) => r.category === cat.name);
+                    const isOther = cat.name === "other";
+
+                    return (
+                      <div key={cat.name} className="category-item">
+                        <div className="category-header">
+                          <span className="category-name">
+                            {cat.name.charAt(0).toUpperCase() + cat.name.slice(1)}
+                            {cat.builtin && (
+                              <span className="category-builtin"> (built-in)</span>
+                            )}
+                          </span>
+                          {!cat.builtin && (
+                            <button
+                              className="category-delete"
+                              onClick={() => removeCategory(cat.name)}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+
+                        {isOther ? (
+                          <div className="category-catchall">Catch-all for unmatched messages</div>
+                        ) : (
+                          <>
+                            {catRules.length > 0 && (
+                              <div className="rule-list">
+                                {catRules.map((rule) => (
+                                  <div key={rule._idx} className="rule-item">
+                                    <span className="rule-type">{rule.rule_type}</span>
+                                    <span className="rule-value">{rule.value}</span>
+                                    <button
+                                      className="rule-remove"
+                                      onClick={() => removeRule(rule._idx)}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="rule-add">
+                              <TypeaheadInput
+                                placeholder="@sender, #channel, or keyword..."
+                                onSelect={(item) => addRuleFromTypeahead(cat.name, item)}
+                              />
+                              <div className="rule-keyword-add">
+                                <input
+                                  type="text"
+                                  className="settings-input rule-keyword-input"
+                                  value={ruleInputs[cat.name] || ""}
+                                  onChange={(e) =>
+                                    setRuleInputs({
+                                      ...ruleInputs,
+                                      [cat.name]: e.target.value,
+                                    })
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      addRule(cat.name);
+                                    }
+                                  }}
+                                  placeholder="keyword (press Enter)"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="category-add">
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCategory();
+                      }
+                    }}
+                    placeholder="New category name (press Enter)"
+                  />
+                </div>
+
+                <div className="settings-hint-text">
+                  Add categories to organize messages. Use rules to auto-sort by sender, channel, or keyword.
+                </div>
+              </div>
             </div>
           </div>
         </div>

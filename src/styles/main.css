@@ -489,7 +489,7 @@ body {
   border-color: var(--accent);
 }
 
-/* Settings dialog — native macOS preferences style */
+/* Settings dialog — iA Writer preferences style */
 .settings-overlay {
   position: fixed;
   top: 0;
@@ -505,12 +505,11 @@ body {
 }
 
 .settings-dialog {
-  /* Always use native light appearance regardless of theme */
   background: #f5f5f7;
   border: 1px solid #c8c8cc;
   border-radius: 10px;
   padding: 0;
-  width: 560px;
+  width: 600px;
   max-height: calc(100vh - 96px);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.1);
   color: #1d1d1f;
@@ -562,74 +561,96 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 20px 24px 24px;
+  padding: 16px 24px 24px;
   overflow-y: auto;
 }
 
-.settings-section-native {
-  padding: 16px 0;
+/* iA Writer-style groups separated by thin lines */
+.settings-group {
+  padding: 14px 0;
   border-bottom: 1px solid #d2d2d7;
 }
 
-.settings-section-native:last-child {
+.settings-group:last-child {
   border-bottom: none;
 }
 
-.settings-section-native:first-child {
-  padding-top: 0;
+.settings-group:first-child {
+  padding-top: 4px;
 }
 
-.settings-section-header {
-  font-size: 11px;
-  font-weight: 600;
-  color: #86868b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 12px;
-}
-
-.settings-row {
+/* Two-column row: right-aligned label | controls */
+.settings-row-ia {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
-.settings-row:last-child {
+.settings-row-ia:last-child {
   margin-bottom: 0;
 }
 
-.settings-label {
+.settings-row-ia-top {
+  align-items: flex-start;
+}
+
+.settings-row-label {
+  width: 120px;
+  min-width: 120px;
+  text-align: right;
+  font-size: 13px;
+  color: #1d1d1f;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.settings-row-ia-top .settings-row-label {
+  padding-top: 8px;
+}
+
+.settings-row-control {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: #86868b;
-  font-size: 12px;
-  width: 100%;
 }
 
-.settings-label-text {
-  color: #1d1d1f;
-  font-size: 13px;
-}
-
-.settings-toggle-row {
+/* Checkbox label — native macOS style */
+.settings-checkbox-label {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  padding: 2px 0;
-}
-
-.settings-toggle-row span {
-  color: #1d1d1f;
+  gap: 6px;
   font-size: 13px;
+  color: #1d1d1f;
+  cursor: pointer;
 }
 
-.settings-toggle-row input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+.settings-checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
   accent-color: #007aff;
+  margin: 0;
+}
+
+/* Hint text below controls */
+.settings-hint-text {
+  font-size: 11px;
+  color: #86868b;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.settings-hint-text kbd,
+.settings-hint-text code {
+  background: #ffffff;
+  border: 1px solid #d2d2d7;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #1d1d1f;
 }
 
 .settings-input {
@@ -886,47 +907,7 @@ body {
   border-radius: 3px;
 }
 
-/* Settings sections */
-.settings-section {
-  padding-top: 0;
-  margin-top: 0;
-  border-top: none;
-}
-
-.settings-section-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: #86868b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 10px;
-}
-
-.settings-section-hint {
-  font-size: 11px;
-  color: #86868b;
-  margin-bottom: 8px;
-}
-
-.settings-section-hint kbd {
-  background: #ffffff;
-  border: 1px solid #d2d2d7;
-  border-radius: 3px;
-  padding: 0 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: #1d1d1f;
-}
-
-.settings-section-hint code {
-  background: #ffffff;
-  border: 1px solid #d2d2d7;
-  border-radius: 3px;
-  padding: 0 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: #1d1d1f;
-}
+/* Settings sections (legacy) */
 
 /* Typeahead (inside settings — uses native light colors) */
 .typeahead-container {
@@ -1001,48 +982,7 @@ body {
   color: #ff3b30;
 }
 
-/* Cache status */
-.cache-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 6px;
-  font-size: 11px;
-}
-
-.cache-status-text {
-  color: #86868b;
-}
-
-.cache-status-error {
-  color: #ff3b30;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 280px;
-}
-
-.cache-refresh-btn {
-  background: none;
-  border: 1px solid #d2d2d7;
-  color: #6e6e73;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.cache-refresh-btn:hover {
-  color: #1d1d1f;
-  border-color: #007aff;
-}
-
-.cache-refresh-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+/* Cache status (legacy) */
 
 /* Category list */
 .category-list {
@@ -1162,22 +1102,7 @@ body {
   margin-top: 8px;
 }
 
-/* ── Appearance picker (native light style) ── */
-.appearance-section {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.appearance-group-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #86868b;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
-}
-
+/* ── Appearance picker ── */
 .theme-picker {
   display: flex;
   gap: 8px;
