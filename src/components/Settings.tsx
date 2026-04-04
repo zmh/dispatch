@@ -363,7 +363,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     { key: "xl", label: "XL" },
   ] as const;
 
-  const currentFontSize = settings.font_size || "m";
+  const currentFontSize = settings.font_size || "s";
 
   const setTheme = (theme: string) => {
     setSettings({ ...settings, theme });

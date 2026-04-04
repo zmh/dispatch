@@ -339,7 +339,7 @@ impl Database {
             category_rules,
             theme: self.get_setting("theme")?.or_else(|| Some("dark".to_string())),
             font: self.get_setting("font")?.or_else(|| Some("system".to_string())),
-            font_size: self.get_setting("font_size")?.or_else(|| Some("m".to_string())),
+            font_size: self.get_setting("font_size")?.or_else(|| Some("s".to_string())),
             open_in_slack_app: self.get_setting("open_in_slack_app")?.map(|v| v == "true").or(Some(false)),
         })
     }
