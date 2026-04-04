@@ -150,6 +150,10 @@ export function useMessages() {
     setSelectedIds(new Set());
   }, []);
 
+  const selectAll = useCallback(() => {
+    setSelectedIds(new Set(messages.map(m => m.id)));
+  }, [messages]);
+
   const switchTab = useCallback((newTab: string) => {
     setTab(newTab);
     setSelectedIndex(0);
@@ -212,6 +216,7 @@ export function useMessages() {
     toggleSelect,
     addToSelection,
     clearSelection,
+    selectAll,
     doRefresh,
     doArchive,
     doArchiveMany,

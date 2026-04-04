@@ -15,6 +15,7 @@ interface UseKeyboardProps {
   toggleSelect: (id: string) => void;
   addToSelection: (id: string) => void;
   clearSelection: () => void;
+  selectAll: () => void;
   switchTab: (tab: string) => void;
   cycleTab: () => void;
   doArchive: (id: string) => Promise<void>;
@@ -40,6 +41,7 @@ export function useKeyboard({
   toggleSelect,
   addToSelection,
   clearSelection,
+  selectAll,
   switchTab,
   cycleTab,
   doArchive,
@@ -69,6 +71,13 @@ export function useKeyboard({
         setShowSnooze(false);
         setShowShortcuts(false);
         if (selectedIds.size > 0) clearSelection();
+        return;
+      }
+
+      // Cmd+A: select all messages in current view
+      if (e.key === "a" && e.metaKey) {
+        e.preventDefault();
+        selectAll();
         return;
       }
 
@@ -188,6 +197,7 @@ export function useKeyboard({
       toggleSelect,
       addToSelection,
       clearSelection,
+      selectAll,
       switchTab,
       cycleTab,
       doArchive,
