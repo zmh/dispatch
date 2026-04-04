@@ -57,6 +57,7 @@ export function MessageList({
           checked={selectedIds.has(msg.id)}
           onClick={() => onSelect(i)}
           onDoubleClick={() => msg.permalink && onOpen(msg.permalink)}
+          onMouseEnter={() => onSelect(i)}
         />
       ))}
     </div>

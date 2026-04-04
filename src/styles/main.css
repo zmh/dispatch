@@ -295,7 +295,6 @@ body {
   overflow: hidden;
 }
 
-.message-row:hover,
 .message-row.selected,
 .message-row.checked {
   background: var(--bg-selected);
