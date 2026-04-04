@@ -65,6 +65,7 @@ pub struct Settings {
     pub category_rules: Option<Vec<CategoryRule>>,
     pub theme: Option<String>,
     pub font: Option<String>,
+    pub font_size: Option<String>,
     pub open_in_slack_app: Option<bool>,
 }
 
@@ -82,6 +83,7 @@ impl Default for Settings {
             category_rules: None,
             theme: Some("dark".to_string()),
             font: Some("system".to_string()),
+            font_size: Some("m".to_string()),
             open_in_slack_app: Some(false),
         }
     }

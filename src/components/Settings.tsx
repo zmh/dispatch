@@ -355,14 +355,29 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     { key: "mono", label: "Mono", className: "font-btn-mono" },
   ] as const;
 
+  const FONT_SIZES = [
+    { key: "xs", label: "XS" },
+    { key: "s", label: "S" },
+    { key: "m", label: "M" },
+    { key: "l", label: "L" },
+    { key: "xl", label: "XL" },
+  ] as const;
+
+  const currentFontSize = settings.font_size || "m";
+
   const setTheme = (theme: string) => {
     setSettings({ ...settings, theme });
-    applyTheme(theme, currentFont);
+    applyTheme(theme, currentFont, currentFontSize);
   };
 
   const setFont = (font: string) => {
     setSettings({ ...settings, font });
-    applyTheme(currentTheme, font);
+    applyTheme(currentTheme, font, currentFontSize);
+  };
+
+  const setFontSize = (font_size: string) => {
+    setSettings({ ...settings, font_size });
+    applyTheme(currentTheme, currentFont, font_size);
   };
 
   return (
@@ -413,6 +428,23 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                       onClick={() => setFont(f.key)}
                     >
                       {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="settings-row-ia">
+              <span className="settings-row-label">Size:</span>
+              <div className="settings-row-control">
+                <div className="font-picker">
+                  {FONT_SIZES.map((s) => (
+                    <button
+                      key={s.key}
+                      className={`font-btn ${currentFontSize === s.key ? "active" : ""}`}
+                      onClick={() => setFontSize(s.key)}
+                    >
+                      {s.label}
                     </button>
                   ))}
                 </div>
