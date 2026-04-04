@@ -200,6 +200,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     category_rules: null,
     theme: null,
     font: null,
+    font_size: null,
     open_in_slack_app: null,
   });
   const [loaded, setLoaded] = useState(false);
