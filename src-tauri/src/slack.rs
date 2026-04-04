@@ -102,6 +102,68 @@ struct ResponseMetadata {
     next_cursor: Option<String>,
 }
 
+/// Skin tone modifier Unicode codepoints (Slack uses :skin-tone-2: through :skin-tone-6:).
+fn skin_tone_modifier(n: u32) -> Option<char> {
+    match n {
+        2 => Some('\u{1F3FB}'), // light
+        3 => Some('\u{1F3FC}'), // medium-light
+        4 => Some('\u{1F3FD}'), // medium
+        5 => Some('\u{1F3FE}'), // medium-dark
+        6 => Some('\u{1F3FF}'), // dark
+        _ => None,
+    }
+}
+
+/// Convert Slack emoji shortcodes (e.g. `:wave:`, `:wave::skin-tone-3:`) to Unicode emoji.
+fn convert_emoji_shortcodes(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+
+    while let Some(start) = remaining.find(':') {
+        result.push_str(&remaining[..start]);
+        let after_colon = &remaining[start + 1..];
+
+        if let Some(end) = after_colon.find(':') {
+            let name = &after_colon[..end];
+            // Skip if it looks like it contains spaces or is empty (not an emoji shortcode)
+            if name.is_empty() || name.contains(' ') {
+                result.push(':');
+                remaining = after_colon;
+                continue;
+            }
+
+            // Check for skin tone modifier
+            if let Some(stripped) = name.strip_prefix("skin-tone-") {
+                if let Ok(n) = stripped.parse::<u32>() {
+                    if let Some(modifier) = skin_tone_modifier(n) {
+                        // Append skin tone modifier to previous emoji
+                        result.push(modifier);
+                        remaining = &after_colon[end + 1..];
+                        continue;
+                    }
+                }
+            }
+
+            // Look up the emoji by shortcode
+            if let Some(emoji) = emojis::get_by_shortcode(name) {
+                result.push_str(emoji.as_str());
+                remaining = &after_colon[end + 1..];
+            } else {
+                // Not a known emoji, keep the original text
+                result.push(':');
+                remaining = after_colon;
+            }
+        } else {
+            // No closing colon found
+            result.push(':');
+            remaining = after_colon;
+        }
+    }
+
+    result.push_str(remaining);
+    result
+}
+
 /// Convert Slack mrkdwn to plain text.
 fn slack_to_plain(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
@@ -147,7 +209,7 @@ fn slack_to_plain(text: &str) -> String {
         }
     }
 
-    result
+    convert_emoji_shortcodes(&result)
 }
 
 /// Convert Slack mrkdwn to HTML for the preview panel.
@@ -197,7 +259,7 @@ fn slack_to_html(text: &str) -> String {
         }
     }
 
-    result
+    convert_emoji_shortcodes(&result)
 }
 
 fn html_escape(s: &str) -> String {
