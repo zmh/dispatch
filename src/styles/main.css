@@ -7,7 +7,7 @@
 
 :root {
   /* Structural */
-  --row-height: 28px;
+  --row-height: 26px;
   --font-size: 13px;
 
   /* Font stacks */
@@ -24,10 +24,10 @@
 
 /* Font size selectors */
 [data-font-size="xs"] { --font-size: 11px; --row-height: 24px; }
-[data-font-size="s"]  { --font-size: 12px; --row-height: 26px; }
-[data-font-size="m"]  { --font-size: 13px; --row-height: 28px; }
-[data-font-size="l"]  { --font-size: 14px; --row-height: 30px; }
-[data-font-size="xl"] { --font-size: 16px; --row-height: 34px; }
+[data-font-size="s"]  { --font-size: 13px; --row-height: 26px; }
+[data-font-size="m"]  { --font-size: 14px; --row-height: 28px; }
+[data-font-size="l"]  { --font-size: 16px; --row-height: 32px; }
+[data-font-size="xl"] { --font-size: 18px; --row-height: 36px; }
 
 /* ── Theme: Dark (default, macOS Dark Mode) ── */
 [data-theme="dark"], :root {
@@ -329,7 +329,7 @@ body {
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: var(--font-size);
 }
 
 .msg-dot {
@@ -342,7 +342,7 @@ body {
   color: var(--text-muted);
   flex-shrink: 0;
   margin-right: 8px;
-  font-size: 12px;
+  font-size: var(--font-size);
 }
 
 .msg-body {
@@ -350,14 +350,14 @@ body {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: var(--font-size);
 }
 
 .msg-time {
   color: var(--text-dim);
   flex-shrink: 0;
   margin-left: 8px;
-  font-size: 11px;
+  font-size: var(--font-size);
   min-width: 24px;
   text-align: right;
 }
@@ -793,24 +793,24 @@ body {
 
 .preview-source {
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--font-size);
   font-weight: 600;
 }
 
 .preview-star {
   color: var(--star);
-  font-size: 13px;
+  font-size: var(--font-size);
 }
 
 .preview-time {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--font-size);
   margin-left: auto;
 }
 
 .preview-sender {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size);
   margin-top: 4px;
 }
 
@@ -824,13 +824,13 @@ body {
   white-space: pre-wrap;
   word-wrap: break-word;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--font-size);
   line-height: 1.6;
   color: var(--text);
 }
 
 .preview-html {
-  font-size: 13px;
+  font-size: var(--font-size);
   line-height: 1.6;
   color: var(--text);
   word-wrap: break-word;

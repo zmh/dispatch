@@ -26,7 +26,7 @@ const DEFAULT_CATEGORIES: Category[] = [
 export function applyTheme(theme: string, font: string, fontSize?: string) {
   document.documentElement.setAttribute("data-theme", theme);
   document.documentElement.setAttribute("data-font", font);
-  document.documentElement.setAttribute("data-font-size", fontSize || "m");
+  document.documentElement.setAttribute("data-font-size", fontSize || "s");
   setWindowTheme(theme).catch(console.error);
 }
 
@@ -51,7 +51,7 @@ export function useMessages() {
       const withStarred = [...cats.filter(c => c.name !== "starred"), STARRED_CATEGORY];
       setCategories(withStarred.sort((a, b) => a.position - b.position));
       // Apply theme/font on load
-      applyTheme(settings.theme || "dark", settings.font || "system", settings.font_size || "m");
+      applyTheme(settings.theme || "dark", settings.font || "system", settings.font_size || "s");
     } catch (e) {
       console.error("Failed to load categories:", e);
     }
