@@ -6,6 +6,7 @@ interface MessageRowProps {
   checked: boolean;
   onClick: () => void;
   onDoubleClick: () => void;
+  onMouseEnter: () => void;
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -24,7 +25,7 @@ function truncateText(text: string, maxLen: number): string {
   return text.slice(0, maxLen) + "…";
 }
 
-export function MessageRow({ message, selected, checked, onClick, onDoubleClick }: MessageRowProps) {
+export function MessageRow({ message, selected, checked, onClick, onDoubleClick, onMouseEnter }: MessageRowProps) {
   const source = message.subject
     ? `#${message.subject}`
     : message.source;
@@ -40,6 +41,7 @@ export function MessageRow({ message, selected, checked, onClick, onDoubleClick 
       className={className}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
+      onMouseEnter={onMouseEnter}
     >
       <span className="msg-check">{checked ? "●" : ""}</span>
       <span className="msg-star">{message.starred ? "★" : " "}</span>
