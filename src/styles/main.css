@@ -158,8 +158,8 @@ body {
   justify-content: space-between;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
-  padding: 0 8px 0 78px;
-  height: 36px;
+  padding: 4px 8px 0 86px;
+  height: 40px;
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
