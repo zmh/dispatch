@@ -79,6 +79,10 @@ export async function getMessages(classification: string, status: string = "inbo
   return invoke("get_messages", { classification, status });
 }
 
+export async function getStarredMessages(): Promise<Message[]> {
+  return invoke("get_starred_messages");
+}
+
 export async function getMessageCounts(status: string = "inbox"): Promise<MessageCounts> {
   return invoke("get_message_counts", { status });
 }

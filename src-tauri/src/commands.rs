@@ -159,6 +159,11 @@ pub async fn refresh_inbox(state: State<'_, AppState>) -> Result<RefreshResult, 
 }
 
 #[tauri::command]
+pub async fn get_starred_messages(state: State<'_, AppState>) -> Result<Vec<Message>, String> {
+    state.db.get_starred_messages()
+}
+
+#[tauri::command]
 pub async fn archive_message(state: State<'_, AppState>, id: String) -> Result<(), String> {
     state.db.archive_message(&id)
 }
