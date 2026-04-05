@@ -980,6 +980,10 @@ body {
   color: var(--text);
 }
 
+.filter-chip-auto {
+  opacity: 0.55;
+}
+
 .chip-remove {
   background: none;
   border: none;

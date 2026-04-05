@@ -86,7 +86,7 @@ function TypeaheadInput({
         setResults(
           channels.map((c) => ({
             id: c.id,
-            label: `#${c.name}`,
+            label: c.name,
             sublabel: c.is_private ? "private" : "public",
             type: "channel" as const,
           }))
@@ -541,6 +541,9 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
               <span className="settings-row-label">Source filters:</span>
               <div className="settings-row-control">
                 <div className="filter-chips">
+                  <span className="filter-chip filter-chip-auto">
+                    to:me
+                  </span>
                   {filters.map((f) => (
                     <span key={f.id} className="filter-chip">
                       {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
