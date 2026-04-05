@@ -104,7 +104,7 @@ async fn classify_batch(
     let max_tokens = (messages.len() as u32 * 80).max(1024);
 
     let request_body = ClaudeRequest {
-        model: "claude-sonnet-4-5-20250929".to_string(),
+        model: "claude-haiku-4-5-20251001".to_string(),
         max_tokens,
         system: system_prompt.to_string(),
         messages: vec![ClaudeMessage {
