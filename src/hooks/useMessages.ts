@@ -8,7 +8,7 @@ import {
   getMessageCounts,
   getSettings,
   refreshInbox,
-  archiveMessage,
+  markDoneMessage,
   snoozeMessage,
   starMessage,
   openLink,
@@ -90,13 +90,13 @@ export function useMessages() {
     }
   }, [fetchMessages]);
 
-  const doArchive = useCallback(async (id: string) => {
-    await archiveMessage(id);
+  const doMarkDone = useCallback(async (id: string) => {
+    await markDoneMessage(id);
     await fetchMessages();
   }, [fetchMessages]);
 
-  const doArchiveMany = useCallback(async (ids: string[]) => {
-    for (const id of ids) await archiveMessage(id);
+  const doMarkDoneMany = useCallback(async (ids: string[]) => {
+    for (const id of ids) await markDoneMessage(id);
     setSelectedIds(new Set());
     await fetchMessages();
   }, [fetchMessages]);
@@ -236,8 +236,8 @@ export function useMessages() {
     clearSelection,
     selectAll,
     doRefresh,
-    doArchive,
-    doArchiveMany,
+    doMarkDone,
+    doMarkDoneMany,
     doSnooze,
     doSnoozeMany,
     doStar,

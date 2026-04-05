@@ -94,7 +94,7 @@ pub fn run() {
             commands::get_starred_messages,
             commands::get_message_counts,
             commands::refresh_inbox,
-            commands::archive_message,
+            commands::mark_done_message,
             commands::snooze_message,
             commands::star_message,
             commands::open_link,

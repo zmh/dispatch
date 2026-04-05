@@ -92,8 +92,8 @@ export async function refreshInbox(): Promise<RefreshResult> {
   return invoke("refresh_inbox");
 }
 
-export async function archiveMessage(id: string): Promise<void> {
-  return invoke("archive_message", { id });
+export async function markDoneMessage(id: string): Promise<void> {
+  return invoke("mark_done_message", { id });
 }
 
 export async function snoozeMessage(id: string, until: number): Promise<void> {
