@@ -31,8 +31,8 @@ function App() {
     clearSelection,
     selectAll,
     doRefresh,
-    doArchive,
-    doArchiveMany,
+    doMarkDone,
+    doMarkDoneMany,
     doSnooze,
     doSnoozeMany,
     doStar,
@@ -108,8 +108,8 @@ function App() {
     selectAll,
     switchTab,
     cycleTab,
-    doArchive,
-    doArchiveMany,
+    doMarkDone,
+    doMarkDoneMany,
     doStar,
     doStarMany,
     doOpenLink,
@@ -170,7 +170,7 @@ function App() {
               {selectedIds.size} selected
             </span>
             <span className="shortcut-bar-spacer" />
-            <span className="shortcut"><kbd>e</kbd> archive</span>
+            <span className="shortcut"><kbd>e</kbd> done</span>
             <span className="shortcut"><kbd>h</kbd> snooze</span>
             <span className="shortcut"><kbd>s</kbd> star</span>
             <span className="shortcut"><kbd>↵</kbd> open</span>
@@ -180,7 +180,7 @@ function App() {
           <>
             <span className="shortcut-bar-spacer" />
             <span className="shortcut"><kbd>x</kbd> select</span>
-            <span className="shortcut"><kbd>e</kbd> archive</span>
+            <span className="shortcut"><kbd>e</kbd> done</span>
             <span className="shortcut"><kbd>h</kbd> snooze</span>
             <span className="shortcut"><kbd>s</kbd> star</span>
             <span className="shortcut"><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
@@ -214,7 +214,7 @@ function App() {
               <div className="shortcut-row"><kbd>k</kbd> / <kbd>↑</kbd><span>Move up</span></div>
               <div className="shortcut-row"><kbd>x</kbd><span>Toggle select</span></div>
               <div className="shortcut-row"><kbd>⇧↓</kbd> / <kbd>⇧↑</kbd><span>Extend selection</span></div>
-              <div className="shortcut-row"><kbd>e</kbd><span>Archive message</span></div>
+              <div className="shortcut-row"><kbd>e</kbd><span>Mark done</span></div>
               <div className="shortcut-row"><kbd>h</kbd><span>Snooze message</span></div>
               <div className="shortcut-row"><kbd>s</kbd><span>Toggle star</span></div>
               <div className="shortcut-row"><kbd>Enter</kbd><span>Open in browser</span></div>

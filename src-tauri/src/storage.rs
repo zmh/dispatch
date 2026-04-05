@@ -208,7 +208,7 @@ impl Database {
         Ok(MessageCounts { counts })
     }
 
-    pub fn archive_message(&self, id: &str) -> Result<(), String> {
+    pub fn mark_done_message(&self, id: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE messages SET status = 'archived' WHERE id = ?1",

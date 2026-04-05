@@ -164,8 +164,8 @@ pub async fn get_starred_messages(state: State<'_, AppState>) -> Result<Vec<Mess
 }
 
 #[tauri::command]
-pub async fn archive_message(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    state.db.archive_message(&id)
+pub async fn mark_done_message(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    state.db.mark_done_message(&id)
 }
 
 #[tauri::command]

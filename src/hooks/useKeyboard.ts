@@ -21,8 +21,8 @@ interface UseKeyboardProps {
   selectAll: () => void;
   switchTab: (tab: string) => void;
   cycleTab: () => void;
-  doArchive: (id: string) => Promise<void>;
-  doArchiveMany: (ids: string[]) => Promise<void>;
+  doMarkDone: (id: string) => Promise<void>;
+  doMarkDoneMany: (ids: string[]) => Promise<void>;
   doStar: (id: string) => Promise<void>;
   doStarMany: (ids: string[]) => Promise<void>;
   doOpenLink: (url: string) => Promise<void>;
@@ -50,8 +50,8 @@ export function useKeyboard({
   selectAll,
   switchTab,
   cycleTab,
-  doArchive,
-  doArchiveMany,
+  doMarkDone,
+  doMarkDoneMany,
   doStar,
   doStarMany,
   doOpenLink,
@@ -136,7 +136,7 @@ export function useKeyboard({
           const ids = getActionIds();
           if (ids.length > 0) {
             e.preventDefault();
-            doArchiveMany(ids);
+            doMarkDoneMany(ids);
           }
           break;
         }
@@ -209,8 +209,8 @@ export function useKeyboard({
       selectAll,
       switchTab,
       cycleTab,
-      doArchive,
-      doArchiveMany,
+      doMarkDone,
+      doMarkDoneMany,
       doStar,
       doStarMany,
       doOpenLink,
