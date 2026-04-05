@@ -20,7 +20,7 @@ export function InboxTabs({
   onOpenSettings,
 }: InboxTabsProps) {
   return (
-    <div className="inbox-tabs">
+    <div className="inbox-tabs" data-tauri-drag-region>
       <div className="tabs-left">
         {categories.map((cat) => {
           const count = counts.counts[cat.name] || 0;

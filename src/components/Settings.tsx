@@ -387,7 +387,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
         className="settings-dialog"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="settings-titlebar">
+        <div className="settings-titlebar" data-tauri-drag-region>
           <button className="settings-close" onClick={onClose} title="Close" />
           <span className="settings-titlebar-text">General</span>
         </div>
