@@ -671,6 +671,56 @@ body {
   color: var(--text);
 }
 
+.settings-hint-text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.settings-hint-text a:hover {
+  text-decoration: underline;
+}
+
+.settings-hint-muted {
+  display: block;
+  margin-top: 2px;
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.settings-code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 4px 0 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.15s;
+}
+
+.settings-code-block:hover {
+  border-color: var(--accent);
+}
+
+.settings-code-block.copied {
+  border-color: var(--accent);
+}
+
+.settings-code-block.copied::after {
+  content: "Copied!";
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 9px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
 .settings-input {
   background: var(--bg);
   border: 1px solid var(--border);

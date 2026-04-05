@@ -483,6 +483,19 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                   }
                   placeholder="xoxc-..."
                 />
+                <div className="settings-hint-text">
+                  Open <a href="https://app.slack.com" target="_blank" rel="noopener noreferrer">app.slack.com</a> in your browser, press <kbd>F12</kbd> to open DevTools, go to <strong>Console</strong>, and paste:
+                  <pre className="settings-code-block" onClick={(e) => {
+                    const text = (e.currentTarget.textContent || "").trim();
+                    navigator.clipboard.writeText(text);
+                    const el = e.currentTarget;
+                    el.classList.add("copied");
+                    setTimeout(() => el.classList.remove("copied"), 1500);
+                  }}>
+{`Object.entries(JSON.parse(localStorage.localConfig_v2).teams).forEach(([,t])=>console.log(t.name,t.token))`}
+                  </pre>
+                  <span className="settings-hint-muted">Click to copy. If you have multiple workspaces, this prints a token for each one — use the one for your workspace.</span>
+                </div>
               </div>
             </div>
 
@@ -498,6 +511,19 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                   }
                   placeholder="xoxd-..."
                 />
+                <div className="settings-hint-text">
+                  Same DevTools console on <a href="https://app.slack.com" target="_blank" rel="noopener noreferrer">app.slack.com</a>, paste:
+                  <pre className="settings-code-block" onClick={(e) => {
+                    const text = (e.currentTarget.textContent || "").trim();
+                    navigator.clipboard.writeText(text);
+                    const el = e.currentTarget;
+                    el.classList.add("copied");
+                    setTimeout(() => el.classList.remove("copied"), 1500);
+                  }}>
+{`document.cookie.split("; ").find(c=>c.startsWith("d=")).slice(2)`}
+                  </pre>
+                  <span className="settings-hint-muted">Click to copy. The cookie is shared across all workspaces — you only need one.</span>
+                </div>
               </div>
             </div>
 
