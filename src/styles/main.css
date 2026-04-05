@@ -393,6 +393,12 @@ body {
   white-space: nowrap;
 }
 
+.selection-count {
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .shortcut kbd {
   background: var(--bg-surface);
   border: 1px solid var(--border);

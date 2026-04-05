@@ -164,15 +164,31 @@ function App() {
             ⚠ {lastRefreshResult.errors[0]}
           </span>
         )}
-        <span className="shortcut-bar-spacer" />
-        <span className="shortcut"><kbd>x</kbd> select</span>
-        <span className="shortcut"><kbd>e</kbd> archive</span>
-        <span className="shortcut"><kbd>h</kbd> snooze</span>
-        <span className="shortcut"><kbd>s</kbd> star</span>
-        <span className="shortcut"><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
-        <span className="shortcut"><kbd>↵</kbd> open</span>
-        <span className="shortcut"><kbd>r</kbd> refresh</span>
-        <span className="shortcut"><kbd>?</kbd> help</span>
+        {selectedIds.size > 0 ? (
+          <>
+            <span className="selection-count">
+              {selectedIds.size} selected
+            </span>
+            <span className="shortcut-bar-spacer" />
+            <span className="shortcut"><kbd>e</kbd> archive</span>
+            <span className="shortcut"><kbd>h</kbd> snooze</span>
+            <span className="shortcut"><kbd>s</kbd> star</span>
+            <span className="shortcut"><kbd>↵</kbd> open</span>
+            <span className="shortcut"><kbd>Esc</kbd> clear</span>
+          </>
+        ) : (
+          <>
+            <span className="shortcut-bar-spacer" />
+            <span className="shortcut"><kbd>x</kbd> select</span>
+            <span className="shortcut"><kbd>e</kbd> archive</span>
+            <span className="shortcut"><kbd>h</kbd> snooze</span>
+            <span className="shortcut"><kbd>s</kbd> star</span>
+            <span className="shortcut"><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
+            <span className="shortcut"><kbd>↵</kbd> open</span>
+            <span className="shortcut"><kbd>r</kbd> refresh</span>
+            <span className="shortcut"><kbd>?</kbd> help</span>
+          </>
+        )}
       </div>
 
       {showSnooze && (
