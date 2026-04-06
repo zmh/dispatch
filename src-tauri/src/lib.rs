@@ -6,8 +6,10 @@ mod storage;
 
 use commands::AppState;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +24,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             db: Arc::new(db),
         })
@@ -86,6 +89,35 @@ pub fn run() {
                     let _: () = msg_send![ns_app, setApplicationIconImage: image];
                 }
             }
+
+            // Background snooze checker: every 30s, unsnooze due messages and notify
+            let db_for_snooze = Arc::clone(&app.state::<AppState>().db);
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    match db_for_snooze.unsnooze_due_messages() {
+                        Ok(count) if count > 0 => {
+                            let enabled = db_for_snooze
+                                .get_setting("notifications_enabled")
+                                .ok()
+                                .flatten()
+                                .map(|v| v == "true")
+                                .unwrap_or(true);
+                            if enabled {
+                                let (title, body) = if count == 1 {
+                                    ("Snoozed message returned".to_string(), "A snoozed message is back in your inbox".to_string())
+                                } else {
+                                    (format!("{} snoozed messages returned", count), format!("{} snoozed messages are back in your inbox", count))
+                                };
+                                let _ = app_handle.notification().builder().title(&title).body(&body).show();
+                            }
+                            let _ = app_handle.emit("snooze-returned", count);
+                        }
+                        _ => {}
+                    }
+                }
+            });
 
             Ok(())
         })

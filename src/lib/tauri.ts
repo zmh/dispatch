@@ -59,6 +59,7 @@ export interface Settings {
   font: string | null;
   font_size: string | null;
   open_in_slack_app: boolean | null;
+  notifications_enabled: boolean | null;
 }
 
 export interface RefreshResult {

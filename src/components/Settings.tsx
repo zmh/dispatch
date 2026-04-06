@@ -202,6 +202,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     font: null,
     font_size: null,
     open_in_slack_app: null,
+    notifications_enabled: null,
   });
   const [loaded, setLoaded] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -464,6 +465,16 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                     }
                   />
                   Open links directly in Slack app
+                </label>
+                <label className="settings-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.notifications_enabled ?? true}
+                    onChange={(e) =>
+                      setSettings({ ...settings, notifications_enabled: e.target.checked })
+                    }
+                  />
+                  Desktop notifications for new &amp; snoozed messages
                 </label>
               </div>
             </div>
