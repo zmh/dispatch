@@ -6,6 +6,7 @@ import { MessageList } from "./components/MessageList";
 import { MessagePreview } from "./components/MessagePreview";
 import { SnoozeDialog } from "./components/SnoozeDialog";
 import { Settings } from "./components/Settings";
+import { AboutDialog } from "./components/AboutDialog";
 import { listen } from "@tauri-apps/api/event";
 
 function App() {
@@ -44,16 +45,21 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSnooze, setShowSnooze] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [panelWidth, setPanelWidth] = useState(400);
   const isResizing = useRef(false);
 
-  // Listen for native menu "Settings..." (Cmd+,)
+  // Listen for native menu events
   useEffect(() => {
-    const unlisten = listen("open-settings", () => {
+    const unlistenSettings = listen("open-settings", () => {
       setShowSettings(true);
     });
+    const unlistenAbout = listen("open-about", () => {
+      setShowAbout(true);
+    });
     return () => {
-      unlisten.then((f) => f());
+      unlistenSettings.then((f) => f());
+      unlistenAbout.then((f) => f());
     };
   }, []);
 
@@ -203,6 +209,10 @@ function App() {
           onClose={() => setShowSettings(false)}
           onCategoriesChanged={loadCategories}
         />
+      )}
+
+      {showAbout && (
+        <AboutDialog onClose={() => setShowAbout(false)} />
       )}
 
       {showShortcuts && (

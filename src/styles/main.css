@@ -1315,3 +1315,75 @@ body {
 
 .font-btn-system { font-family: var(--font-system); }
 .font-btn-mono   { font-family: var(--font-mono); }
+
+/* About dialog */
+.about-dialog {
+  text-align: center;
+  min-width: 300px;
+  max-width: 360px;
+  padding: 28px 32px 20px;
+}
+
+.about-icon {
+  margin-bottom: 12px;
+}
+
+.about-icon img {
+  border-radius: 16px;
+}
+
+.about-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.about-version {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.about-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.about-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.about-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.about-link:hover {
+  text-decoration: underline;
+}
+
+.about-link-sep {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.about-copyright {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.about-dialog .dialog-footer {
+  justify-content: center;
+}
