@@ -30,15 +30,22 @@ pub fn run() {
         })
         .setup(|app| {
             // App submenu
+            let about_item =
+                MenuItem::with_id(app, "about", "About Haystack", true, None::<&str>)?;
+            let sep_about = PredefinedMenuItem::separator(app)?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+Comma"))?;
             let separator = PredefinedMenuItem::separator(app)?;
+            let hide = PredefinedMenuItem::hide(app, None)?;
+            let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+            let show_all = PredefinedMenuItem::show_all(app, None)?;
+            let sep_quit = PredefinedMenuItem::separator(app)?;
             let quit = PredefinedMenuItem::quit(app, Some("Quit Haystack"))?;
             let app_submenu = Submenu::with_items(
                 app,
                 "Haystack",
                 true,
-                &[&settings_item, &separator, &quit],
+                &[&about_item, &sep_about, &settings_item, &separator, &hide, &hide_others, &show_all, &sep_quit, &quit],
             )?;
 
             // Edit submenu (standard macOS text editing)
@@ -72,6 +79,8 @@ pub fn run() {
             app.on_menu_event(|app_handle, event| {
                 if event.id() == "settings" {
                     let _ = app_handle.emit("open-settings", ());
+                } else if event.id() == "about" {
+                    let _ = app_handle.emit("open-about", ());
                 }
             });
 
