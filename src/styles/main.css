@@ -1357,6 +1357,20 @@ body {
   width: 4px;
 }
 
+.swatch-preview-split {
+  flex-direction: row;
+}
+
+.swatch-half-light {
+  flex: 1;
+  background: #ffffff;
+}
+
+.swatch-half-dark {
+  flex: 1;
+  background: #1c1c1e;
+}
+
 .swatch-label {
   font-size: 10px;
   color: var(--text-muted);

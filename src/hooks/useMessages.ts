@@ -25,11 +25,36 @@ const DEFAULT_CATEGORIES: Category[] = [
   { name: "other", builtin: true, position: 1 },
 ];
 
+let systemThemeCleanup: (() => void) | null = null;
+
+function resolveSystemTheme(): string {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export function applyTheme(theme: string, font: string, fontSize?: string) {
-  document.documentElement.setAttribute("data-theme", theme);
+  // Clean up any previous system theme listener
+  if (systemThemeCleanup) {
+    systemThemeCleanup();
+    systemThemeCleanup = null;
+  }
+
+  const resolved = theme === "system" ? resolveSystemTheme() : theme;
+  document.documentElement.setAttribute("data-theme", resolved);
   document.documentElement.setAttribute("data-font", font);
   document.documentElement.setAttribute("data-font-size", fontSize || "s");
-  setWindowTheme(theme).catch(console.error);
+  setWindowTheme(resolved).catch(console.error);
+
+  // Listen for OS appearance changes when using system theme
+  if (theme === "system") {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      const newTheme = e.matches ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", newTheme);
+      setWindowTheme(newTheme).catch(console.error);
+    };
+    mq.addEventListener("change", handler);
+    systemThemeCleanup = () => mq.removeEventListener("change", handler);
+  }
 }
 
 export function useMessages() {
