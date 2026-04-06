@@ -98,7 +98,7 @@ pub fn run() {
                 }
             });
 
-            // Set squircle app icon at runtime (macOS doesn't mask unsigned dev builds)
+            // Set app icon at runtime (dev builds don't have a proper .app bundle)
             #[cfg(target_os = "macos")]
             {
                 use cocoa::base::id;

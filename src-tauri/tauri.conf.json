@@ -37,10 +37,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "infoPlist": {
-        "CFBundleDisplayName": "Dispatch",
-        "CFBundleName": "Dispatch"
-      }
+      "infoPlist": "Info.plist"
     }
   }
 }
