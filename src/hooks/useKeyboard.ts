@@ -21,6 +21,7 @@ interface UseKeyboardProps {
   selectAll: () => void;
   switchTab: (tab: string) => void;
   cycleTab: () => void;
+  cyclePrevTab: () => void;
   doMarkDone: (id: string) => Promise<void>;
   doMarkDoneMany: (ids: string[]) => Promise<void>;
   doStar: (id: string) => Promise<void>;
@@ -50,6 +51,7 @@ export function useKeyboard({
   selectAll,
   switchTab,
   cycleTab,
+  cyclePrevTab,
   doMarkDone,
   doMarkDoneMany,
   doStar,
@@ -174,7 +176,11 @@ export function useKeyboard({
           break;
         case "Tab":
           e.preventDefault();
-          cycleTab();
+          if (e.shiftKey) {
+            cyclePrevTab();
+          } else {
+            cycleTab();
+          }
           break;
         case "?":
           e.preventDefault();
@@ -209,6 +215,7 @@ export function useKeyboard({
       selectAll,
       switchTab,
       cycleTab,
+      cyclePrevTab,
       doMarkDone,
       doMarkDoneMany,
       doStar,

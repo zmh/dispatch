@@ -80,6 +80,14 @@ pub async fn get_messages(
 }
 
 #[tauri::command]
+pub async fn get_messages_by_status(
+    state: State<'_, AppState>,
+    status: String,
+) -> Result<Vec<Message>, String> {
+    state.db.get_messages_by_status(&status)
+}
+
+#[tauri::command]
 pub async fn get_message_counts(
     state: State<'_, AppState>,
     status: String,

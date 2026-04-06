@@ -134,6 +134,53 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn get_messages_by_status(&self, status: &str) -> Result<Vec<Message>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+
+        // Unsnoze any messages whose snooze time has passed
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        conn.execute(
+            "UPDATE messages SET status = 'inbox', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?1",
+            params![now],
+        ).map_err(|e| e.to_string())?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                 FROM messages
+                 WHERE status = ?1
+                 ORDER BY timestamp DESC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let messages = stmt
+            .query_map(params![status], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    sender: row.get(2)?,
+                    subject: row.get(3)?,
+                    body: row.get(4)?,
+                    body_html: row.get(5)?,
+                    permalink: row.get(6)?,
+                    timestamp: row.get(7)?,
+                    classification: row.get(8)?,
+                    status: row.get(9)?,
+                    starred: row.get::<_, i32>(10)? != 0,
+                    snoozed_until: row.get(11)?,
+                    created_at: row.get(12)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(messages)
+    }
+
     pub fn get_starred_messages(&self) -> Result<Vec<Message>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
