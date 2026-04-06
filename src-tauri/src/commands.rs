@@ -10,6 +10,30 @@ use crate::models::{
 use crate::slack;
 use crate::storage::Database;
 
+/// Build the AI classification system prompt from per-category descriptions.
+fn build_classification_prompt(categories: &[Category]) -> String {
+    let mut lines = vec![
+        "You are a message classifier for a CEO's inbox.".to_string(),
+        "Classify each message into exactly one of these categories:".to_string(),
+        String::new(),
+    ];
+
+    for cat in categories {
+        if cat.name == "other" {
+            continue; // "other" is the hardcoded fallback, not listed with a description
+        }
+        let desc = cat.description.as_deref().unwrap_or("(no description provided)");
+        lines.push(format!("- \"{}\": {}", cat.name, desc));
+    }
+
+    lines.push(String::new());
+    lines.push("If a message doesn't clearly fit any category above, classify it as \"other\".".to_string());
+    lines.push(String::new());
+    lines.push("Respond with ONLY a JSON array.".to_string());
+
+    lines.join("\n")
+}
+
 pub struct AppState {
     pub db: Arc<Database>,
 }
@@ -135,16 +159,7 @@ pub async fn refresh_inbox(app: tauri::AppHandle, state: State<'_, AppState>) ->
     if let Some(ref api_key) = settings.claude_api_key {
         let unclassified = state.db.get_unclassified_messages()?;
         if !unclassified.is_empty() {
-            let user_prompt = settings
-                .classification_prompt
-                .as_deref()
-                .unwrap_or("Classify each message as 'important' or 'other'.");
-
-            let categories_str = category_names.join(", ");
-            let system_prompt = format!(
-                "You are a message classifier for a CEO's inbox. Classify each message into one of these categories: {}\n\nClassification criteria:\n{}\n\nRespond with ONLY a JSON array.",
-                categories_str, user_prompt
-            );
+            let system_prompt = build_classification_prompt(&categories);
 
             match classifier::classify_messages(api_key, &system_prompt, &unclassified, &category_names).await {
                 Ok(classifications) => {
@@ -291,7 +306,7 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     state.db.save_settings(&settings)
 }
 

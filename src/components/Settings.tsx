@@ -6,13 +6,18 @@ import {
   CategoryRule,
   getSettings,
   saveSettings,
+  refreshInbox,
   searchSlackUsers,
   searchSlackChannels,
 } from "../lib/tauri";
 import { applyTheme } from "../hooks/useMessages";
 
+const DEFAULT_DESCRIPTIONS: Record<string, string> = {
+  important: "Messages that require direct attention or action — decisions needed, urgent requests, escalations, and messages that need a response.",
+};
+
 const DEFAULT_CATEGORIES: Category[] = [
-  { name: "important", builtin: true, position: 0 },
+  { name: "important", builtin: true, position: 0, description: DEFAULT_DESCRIPTIONS.important },
   { name: "other", builtin: true, position: 1 },
 ];
 
@@ -194,7 +199,6 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     slack_token: null,
     slack_cookie: null,
     claude_api_key: null,
-    classification_prompt: null,
     slack_filters: null,
     categories: null,
     category_rules: null,
@@ -234,8 +238,12 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await saveSettings(settings);
+        const classificationsReset = await saveSettings(settings);
         onCategoriesChanged?.();
+        if (classificationsReset) {
+          // Descriptions changed — auto-refresh to reclassify
+          refreshInbox().catch(console.error);
+        }
       } catch (e) {
         console.error("Failed to save settings:", e);
       }
@@ -335,6 +343,15 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
     setSettings({
       ...settings,
       category_rules: rules.filter((_, i) => i !== idx),
+    });
+  };
+
+  const updateCategoryDescription = (name: string, description: string) => {
+    setSettings({
+      ...settings,
+      categories: categories.map((c) =>
+        c.name === name ? { ...c, description: description || DEFAULT_DESCRIPTIONS[name] || undefined } : c
+      ),
     });
   };
 
@@ -547,23 +564,6 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
               </div>
             </div>
 
-            <div className="settings-row-ia">
-              <span className="settings-row-label">Classifier:</span>
-              <div className="settings-row-control">
-                <textarea
-                  className="settings-textarea"
-                  value={settings.classification_prompt || ""}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      classification_prompt: e.target.value || null,
-                    })
-                  }
-                  rows={3}
-                  placeholder="Instructions for Claude to classify messages..."
-                />
-              </div>
-            </div>
           </div>
 
           {/* Source Filters group */}
@@ -636,6 +636,17 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                           <div className="category-catchall">Catch-all for unmatched messages</div>
                         ) : (
                           <>
+                            <textarea
+                              className="category-description"
+                              value={cat.description || ""}
+                              onChange={(e) => updateCategoryDescription(cat.name, e.target.value)}
+                              rows={2}
+                              placeholder="Describe what messages belong here (used by AI classifier)..."
+                            />
+                            {!settings.claude_api_key && (
+                              <div className="category-ai-hint">Add a Claude API key to enable AI classification</div>
+                            )}
+
                             {catRules.length > 0 && (
                               <div className="rule-list">
                                 {catRules.map((rule) => (
@@ -703,7 +714,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                 </div>
 
                 <div className="settings-hint-text">
-                  Add categories to organize messages. Use rules to auto-sort by sender, channel, or keyword.
+                  Rules auto-sort messages by keyword, sender, or channel. AI uses descriptions for everything else.
                 </div>
               </div>
             </div>

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub const DEFAULT_IMPORTANT_DESCRIPTION: &str = "Messages that require direct attention or action — decisions needed, urgent requests, escalations, and messages that need a response.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
@@ -44,6 +46,8 @@ pub struct Category {
     pub name: String,
     pub builtin: bool,
     pub position: i32,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +63,6 @@ pub struct Settings {
     pub slack_token: Option<String>,
     pub slack_cookie: Option<String>,
     pub claude_api_key: Option<String>,
-    pub classification_prompt: Option<String>,
     pub slack_filters: Option<Vec<SlackFilter>>,
     pub categories: Option<Vec<Category>>,
     pub category_rules: Option<Vec<CategoryRule>>,
@@ -76,9 +79,6 @@ impl Default for Settings {
             slack_token: None,
             slack_cookie: None,
             claude_api_key: None,
-            classification_prompt: Some(
-                "Classify each message. If it's relevant to Clay / Mesh, or asks to check a box or respond, classify as 'important'. Otherwise 'other'.".to_string()
-            ),
             slack_filters: None,
             categories: None,
             category_rules: None,
@@ -93,10 +93,30 @@ impl Default for Settings {
 
 impl Settings {
     pub fn effective_categories(&self) -> Vec<Category> {
-        self.categories.clone().unwrap_or_else(|| vec![
-            Category { name: "important".to_string(), builtin: true, position: 0 },
-            Category { name: "other".to_string(), builtin: true, position: 1 },
-        ])
+        match self.categories.clone() {
+            Some(mut cats) => {
+                for cat in &mut cats {
+                    if cat.name == "important" && cat.description.is_none() {
+                        cat.description = Some(DEFAULT_IMPORTANT_DESCRIPTION.to_string());
+                    }
+                }
+                cats
+            }
+            None => vec![
+                Category {
+                    name: "important".to_string(),
+                    builtin: true,
+                    position: 0,
+                    description: Some(DEFAULT_IMPORTANT_DESCRIPTION.to_string()),
+                },
+                Category {
+                    name: "other".to_string(),
+                    builtin: true,
+                    position: 1,
+                    description: None,
+                },
+            ],
+        }
     }
 
     pub fn effective_rules(&self) -> Vec<CategoryRule> {

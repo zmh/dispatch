@@ -1214,6 +1214,36 @@ body {
   font-style: italic;
 }
 
+.category-description {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  resize: vertical;
+  width: 100%;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.category-description:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+}
+
+.category-description::placeholder {
+  color: var(--text-dim);
+}
+
+.category-ai-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* Rule list */
 .rule-list {
   display: flex;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::models::{Category, CategoryRule, Message, MessageCounts, Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser};
+use crate::models::{Category, CategoryRule, Message, MessageCounts, Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -363,6 +363,13 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_setting(&self, key: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM settings WHERE key = ?1", params![key])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn get_settings(&self) -> Result<Settings, String> {
         let slack_filters: Option<Vec<SlackFilter>> = self
             .get_setting("slack_filters")?
@@ -374,13 +381,62 @@ impl Database {
             .get_setting("category_rules")?
             .and_then(|v| serde_json::from_str(&v).ok());
 
+        // One-time migration: if old classification_prompt exists, copy it into
+        // "important"'s description (if no category has a description yet), then delete the key.
+        let old_prompt = self.get_setting("classification_prompt")?;
+        let mut categories = categories;
+        if let Some(ref prompt) = old_prompt {
+            let needs_migration = categories.as_ref().map_or(true, |cats| {
+                cats.iter().all(|c| c.description.is_none())
+            });
+            if needs_migration {
+                let mut cats = categories.unwrap_or_else(|| vec![
+                    Category {
+                        name: "important".to_string(),
+                        builtin: true,
+                        position: 0,
+                        description: None,
+                    },
+                    Category {
+                        name: "other".to_string(),
+                        builtin: true,
+                        position: 1,
+                        description: None,
+                    },
+                ]);
+                for cat in &mut cats {
+                    if cat.name == "important" {
+                        cat.description = Some(prompt.clone());
+                    }
+                }
+                let json = serde_json::to_string(&cats).map_err(|e| e.to_string())?;
+                self.set_setting("categories", &json)?;
+                categories = Some(cats);
+            }
+            // Always delete the old key so migration never re-triggers
+            self.delete_setting("classification_prompt")?;
+        }
+
+        // Fill in default description for "important" if missing, and persist so
+        // save_settings() won't detect a spurious "change" on first save.
+        if let Some(ref mut cats) = categories {
+            let mut patched = false;
+            for cat in cats.iter_mut() {
+                if cat.name == "important" && cat.description.is_none() {
+                    cat.description = Some(DEFAULT_IMPORTANT_DESCRIPTION.to_string());
+                    patched = true;
+                }
+            }
+            if patched {
+                let json = serde_json::to_string(&*cats).map_err(|e| e.to_string())?;
+                self.set_setting("categories", &json)?;
+            }
+        }
+
         Ok(Settings {
             slack_token: self.get_setting("slack_token")?,
             slack_cookie: self.get_setting("slack_cookie")?,
             claude_api_key: self.get_setting("claude_api_key")?,
-            classification_prompt: self.get_setting("classification_prompt")?.or_else(|| {
-                Some("Classify each message. If it's relevant to Clay / Mesh, or asks to check a box or respond, classify as 'important'. Otherwise 'other'.".to_string())
-            }),
             slack_filters,
             categories,
             category_rules,
@@ -392,7 +448,10 @@ impl Database {
         })
     }
 
-    pub fn save_settings(&self, settings: &Settings) -> Result<(), String> {
+    /// Save settings. Returns `true` if classifications were reset (descriptions changed).
+    pub fn save_settings(&self, settings: &Settings) -> Result<bool, String> {
+        let mut classifications_reset = false;
+
         if let Some(ref val) = settings.slack_token {
             self.set_setting("slack_token", val)?;
         }
@@ -402,13 +461,6 @@ impl Database {
         if let Some(ref val) = settings.claude_api_key {
             self.set_setting("claude_api_key", val)?;
         }
-        if let Some(ref new_prompt) = settings.classification_prompt {
-            let old_prompt = self.get_setting("classification_prompt")?;
-            if old_prompt.as_deref() != Some(new_prompt.as_str()) {
-                self.set_setting("classification_prompt", new_prompt)?;
-                self.reset_classifications()?;
-            }
-        }
 
         // Save slack filters as JSON
         if let Some(ref filters) = settings.slack_filters {
@@ -416,13 +468,34 @@ impl Database {
             self.set_setting("slack_filters", &json)?;
         }
 
-        // Save categories — only reassign messages from removed categories
+        // Save categories — detect description changes and reassign removed categories
         let old_categories = self.get_setting("categories")?;
         let old_rules = self.get_setting("category_rules")?;
 
         if let Some(ref cats) = settings.categories {
             let json = serde_json::to_string(cats).map_err(|e| e.to_string())?;
             if old_categories.as_deref() != Some(&json) {
+                // Check if descriptions changed for existing categories (triggers reclassification).
+                // New categories don't count — they have no messages yet.
+                let descriptions_changed = if let Some(ref old_json) = old_categories {
+                    if let Ok(old_cats) = serde_json::from_str::<Vec<Category>>(old_json) {
+                        let old_descs: std::collections::HashMap<&str, Option<&str>> = old_cats
+                            .iter()
+                            .map(|c| (c.name.as_str(), c.description.as_deref()))
+                            .collect();
+                        cats.iter().any(|c| {
+                            match old_descs.get(c.name.as_str()) {
+                                Some(old_desc) => old_desc != &c.description.as_deref(),
+                                None => false, // new category, not a description change
+                            }
+                        })
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
                 // Find removed categories and reassign their messages to "other"
                 if let Some(ref old_json) = old_categories {
                     if let Ok(old_cats) = serde_json::from_str::<Vec<Category>>(old_json) {
@@ -435,6 +508,11 @@ impl Database {
                     }
                 }
                 self.set_setting("categories", &json)?;
+
+                if descriptions_changed {
+                    self.reset_classifications()?;
+                    classifications_reset = true;
+                }
             }
         }
 
@@ -462,7 +540,7 @@ impl Database {
             self.set_setting("notifications_enabled", if val { "true" } else { "false" })?;
         }
 
-        Ok(())
+        Ok(classifications_reset)
     }
 
     pub fn unsnooze_due_messages(&self) -> Result<usize, String> {

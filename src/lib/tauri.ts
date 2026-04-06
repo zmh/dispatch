@@ -38,6 +38,7 @@ export interface Category {
   name: string;
   builtin: boolean;
   position: number;
+  description?: string;
 }
 
 export interface CategoryRule {
@@ -51,7 +52,6 @@ export interface Settings {
   slack_token: string | null;
   slack_cookie: string | null;
   claude_api_key: string | null;
-  classification_prompt: string | null;
   slack_filters: SlackFilter[] | null;
   categories: Category[] | null;
   category_rules: CategoryRule[] | null;
@@ -117,7 +117,7 @@ export async function getSettings(): Promise<Settings> {
   return invoke("get_settings");
 }
 
-export async function saveSettings(settings: Settings): Promise<void> {
+export async function saveSettings(settings: Settings): Promise<boolean> {
   return invoke("save_settings", { settings });
 }
 
