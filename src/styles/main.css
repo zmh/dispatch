@@ -501,11 +501,98 @@ body {
   border-radius: 4px;
   cursor: pointer;
   text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .snooze-option:hover {
   background: var(--bg-hover);
   border-color: var(--accent);
+}
+
+.snooze-option-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.snooze-option-detail {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.snooze-option kbd {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  min-width: 16px;
+  text-align: center;
+}
+
+.snooze-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.snooze-custom {
+  display: flex;
+  flex-direction: column;
+}
+
+.snooze-custom-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.snooze-custom-input:focus {
+  border-color: var(--accent);
+}
+
+.snooze-custom-input::placeholder {
+  color: var(--text-dim);
+}
+
+.snooze-preview {
+  font-size: 12px;
+  margin-top: 8px;
+  min-height: 18px;
+}
+
+.snooze-preview--valid {
+  color: var(--accent);
+}
+
+.snooze-preview--invalid {
+  color: var(--text-dim);
+}
+
+.snooze-confirm {
+  background: var(--accent);
+  border: none;
+  color: white;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.snooze-confirm:hover {
+  background: var(--accent-dim);
 }
 
 /* Settings dialog — iA Writer preferences style */
