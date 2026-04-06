@@ -123,6 +123,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_messages,
+            commands::get_messages_by_status,
             commands::get_starred_messages,
             commands::get_message_counts,
             commands::refresh_inbox,

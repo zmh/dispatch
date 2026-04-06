@@ -81,6 +81,10 @@ export async function getMessages(classification: string, status: string = "inbo
   return invoke("get_messages", { classification, status });
 }
 
+export async function getMessagesByStatus(status: string): Promise<Message[]> {
+  return invoke("get_messages_by_status", { status });
+}
+
 export async function getStarredMessages(): Promise<Message[]> {
   return invoke("get_starred_messages");
 }

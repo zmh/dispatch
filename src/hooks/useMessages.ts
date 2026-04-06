@@ -5,6 +5,7 @@ import {
   MessageCounts,
   Category,
   getMessages,
+  getMessagesByStatus,
   getStarredMessages,
   getMessageCounts,
   getSettings,
@@ -58,15 +59,36 @@ export function useMessages() {
     }
   }, []);
 
+  const isStatusTab = (t: string) => t === "snoozed" || t === "archived";
+
   const fetchMessages = useCallback(async () => {
     setLoading(true);
     try {
-      const [msgs, cts] = await Promise.all([
-        tab === "starred" ? getStarredMessages() : getMessages(tab, "inbox"),
+      let msgsPromise: Promise<Message[]>;
+      if (tab === "starred") {
+        msgsPromise = getStarredMessages();
+      } else if (isStatusTab(tab)) {
+        msgsPromise = getMessagesByStatus(tab);
+      } else {
+        msgsPromise = getMessages(tab, "inbox");
+      }
+
+      const [msgs, inboxCts, snoozedCts, archivedCts] = await Promise.all([
+        msgsPromise,
         getMessageCounts("inbox"),
+        getMessageCounts("snoozed"),
+        getMessageCounts("archived"),
       ]);
+
+      // Merge counts: inbox classification counts + total snoozed/archived
+      const mergedCounts = { ...inboxCts.counts };
+      const snoozedTotal = Object.values(snoozedCts.counts).reduce((a, b) => a + b, 0) - (snoozedCts.counts["starred"] || 0);
+      const archivedTotal = Object.values(archivedCts.counts).reduce((a, b) => a + b, 0) - (archivedCts.counts["starred"] || 0);
+      mergedCounts["snoozed"] = snoozedTotal;
+      mergedCounts["archived"] = archivedTotal;
+
       setMessages(msgs);
-      setCounts(cts);
+      setCounts({ counts: mergedCounts });
       // Clamp selected index
       if (msgs.length > 0 && selectedIndex >= msgs.length) {
         setSelectedIndex(msgs.length - 1);
@@ -179,7 +201,19 @@ export function useMessages() {
   const cycleTab = useCallback(() => {
     setTab(prev => {
       const idx = categories.findIndex(c => c.name === prev);
+      if (idx < 0) return categories[0].name;
       const next = (idx + 1) % categories.length;
+      return categories[next].name;
+    });
+    setSelectedIndex(0);
+    setSelectedIds(new Set());
+  }, [categories]);
+
+  const cyclePrevTab = useCallback(() => {
+    setTab(prev => {
+      const idx = categories.findIndex(c => c.name === prev);
+      if (idx < 0) return categories[0].name;
+      const next = (idx - 1 + categories.length) % categories.length;
       return categories[next].name;
     });
     setSelectedIndex(0);
@@ -240,6 +274,7 @@ export function useMessages() {
     setSelectionAnchor,
     switchTab,
     cycleTab,
+    cyclePrevTab,
     moveSelection,
     toggleSelect,
     addToSelection,
