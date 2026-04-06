@@ -8,6 +8,7 @@ import { SnoozeDialog } from "./components/SnoozeDialog";
 import { Settings } from "./components/Settings";
 import { AboutDialog } from "./components/AboutDialog";
 import { listen } from "@tauri-apps/api/event";
+import { openLink, getSettings } from "./lib/tauri";
 
 function App() {
   const {
@@ -49,6 +50,24 @@ function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [panelWidth, setPanelWidth] = useState(400);
   const isResizing = useRef(false);
+
+  // Intercept all <a> clicks and open them in the default browser
+  useEffect(() => {
+    const handler = async (e: MouseEvent) => {
+      const anchor = (e.target as HTMLElement).closest("a");
+      if (anchor?.href) {
+        e.preventDefault();
+        try {
+          const settings = await getSettings();
+          await openLink(anchor.href, settings.open_in_slack_app ?? false);
+        } catch {
+          await openLink(anchor.href, false);
+        }
+      }
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, []);
 
   // Listen for native menu events
   useEffect(() => {
