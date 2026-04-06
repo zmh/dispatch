@@ -158,7 +158,7 @@ body {
   justify-content: space-between;
   border-bottom: 1px solid var(--border);
   background: var(--bg-surface);
-  padding: 4px 8px 0 86px;
+  padding: 0 8px 0 86px;
   height: 40px;
   flex-shrink: 0;
   -webkit-app-region: drag;
@@ -168,7 +168,6 @@ body {
   display: flex;
   align-items: center;
   gap: 2px;
-  -webkit-app-region: no-drag;
 }
 
 .tab {
@@ -181,6 +180,7 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: color 0.1s;
+  -webkit-app-region: no-drag;
 }
 
 .tab:hover {
@@ -214,6 +214,7 @@ body {
   padding: 4px 8px;
   cursor: pointer;
   border-radius: 4px;
+  -webkit-app-region: no-drag;
 }
 
 .tab-action:hover {
