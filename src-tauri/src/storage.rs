@@ -534,20 +534,25 @@ impl Database {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn search_slack_users(&self, query: &str) -> Result<Vec<SlackUser>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let pattern = format!("%{}%", query.to_lowercase());
+        let query_lower = query.to_lowercase();
+        let pattern = format!("%{}%", query_lower);
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, real_name FROM slack_users_cache
                  WHERE LOWER(name) LIKE ?1 OR LOWER(real_name) LIKE ?1
-                 ORDER BY real_name ASC LIMIT 20",
+                 ORDER BY
+                   CASE WHEN LOWER(name) = ?2 OR LOWER(real_name) = ?2 THEN 0
+                        WHEN LOWER(name) LIKE ?2 || '%' OR LOWER(real_name) LIKE ?2 || '%' THEN 1
+                        ELSE 2 END,
+                   real_name ASC
+                 LIMIT 20",
             )
             .map_err(|e| e.to_string())?;
 
         let users = stmt
-            .query_map(params![pattern], |row| {
+            .query_map(params![pattern, query_lower], |row| {
                 Ok(SlackUser {
                     id: row.get(0)?,
                     name: row.get(1)?,
@@ -561,20 +566,25 @@ impl Database {
         Ok(users)
     }
 
-    #[allow(dead_code)]
     pub fn search_slack_channels(&self, query: &str) -> Result<Vec<SlackChannel>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let pattern = format!("%{}%", query.to_lowercase());
+        let query_lower = query.to_lowercase();
+        let pattern = format!("%{}%", query_lower);
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, is_private FROM slack_channels_cache
                  WHERE LOWER(name) LIKE ?1
-                 ORDER BY name ASC LIMIT 20",
+                 ORDER BY
+                   CASE WHEN LOWER(name) = ?2 THEN 0
+                        WHEN LOWER(name) LIKE ?2 || '%' THEN 1
+                        ELSE 2 END,
+                   name ASC
+                 LIMIT 20",
             )
             .map_err(|e| e.to_string())?;
 
         let channels = stmt
-            .query_map(params![pattern], |row| {
+            .query_map(params![pattern, query_lower], |row| {
                 Ok(SlackChannel {
                     id: row.get(0)?,
                     name: row.get(1)?,
