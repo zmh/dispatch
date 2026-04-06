@@ -484,17 +484,14 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                   placeholder="xoxc-..."
                 />
                 <div className="settings-hint-text">
-                  Open <a href="https://app.slack.com" target="_blank" rel="noopener noreferrer">app.slack.com</a> in your browser, press <kbd>F12</kbd> to open DevTools, go to <strong>Console</strong>, and paste:
-                  <pre className="settings-code-block" onClick={(e) => {
-                    const text = (e.currentTarget.textContent || "").trim();
-                    navigator.clipboard.writeText(text);
+                  Open <a href="https://app.slack.com" target="_blank" rel="noopener noreferrer">app.slack.com</a> &rarr; DevTools (<kbd>F12</kbd>) &rarr; Console &rarr; <span className="settings-copy-link" onClick={(e) => {
+                    navigator.clipboard.writeText(`Object.entries(JSON.parse(localStorage.localConfig_v2).teams).forEach(([,t])=>console.log(t.name,t.token))`);
                     const el = e.currentTarget;
+                    const orig = el.textContent;
+                    el.textContent = "Copied!";
                     el.classList.add("copied");
-                    setTimeout(() => el.classList.remove("copied"), 1500);
-                  }}>
-{`Object.entries(JSON.parse(localStorage.localConfig_v2).teams).forEach(([,t])=>console.log(t.name,t.token))`}
-                  </pre>
-                  <span className="settings-hint-muted">Click to copy. If you have multiple workspaces, this prints a token for each one — use the one for your workspace.</span>
+                    setTimeout(() => { el.textContent = orig; el.classList.remove("copied"); }, 1500);
+                  }}>copy command</span> and paste.
                 </div>
               </div>
             </div>
@@ -512,17 +509,14 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                   placeholder="xoxd-..."
                 />
                 <div className="settings-hint-text">
-                  Same DevTools console on <a href="https://app.slack.com" target="_blank" rel="noopener noreferrer">app.slack.com</a>, paste:
-                  <pre className="settings-code-block" onClick={(e) => {
-                    const text = (e.currentTarget.textContent || "").trim();
-                    navigator.clipboard.writeText(text);
+                  Same console &rarr; <span className="settings-copy-link" onClick={(e) => {
+                    navigator.clipboard.writeText(`document.cookie.split("; ").find(c=>c.startsWith("d=")).slice(2)`);
                     const el = e.currentTarget;
+                    const orig = el.textContent;
+                    el.textContent = "Copied!";
                     el.classList.add("copied");
-                    setTimeout(() => el.classList.remove("copied"), 1500);
-                  }}>
-{`document.cookie.split("; ").find(c=>c.startsWith("d=")).slice(2)`}
-                  </pre>
-                  <span className="settings-hint-muted">Click to copy. The cookie is shared across all workspaces — you only need one.</span>
+                    setTimeout(() => { el.textContent = orig; el.classList.remove("copied"); }, 1500);
+                  }}>copy command</span> and paste.
                 </div>
               </div>
             </div>
@@ -573,7 +567,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                   {filters.map((f) => (
                     <span key={f.id} className="filter-chip">
                       {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
-                      {f.display_name}
+                      {f.display_name.replace(/^#/, "")}
                       <button
                         className="chip-remove"
                         onClick={() => removeFilter(f.id)}
@@ -598,7 +592,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
 
           {/* Categories & Rules group */}
           <div className="settings-group">
-            <div className="settings-row-ia settings-row-ia-top">
+            <div className="settings-row-ia">
               <span className="settings-row-label">Categories:</span>
               <div className="settings-row-control">
                 <div className="category-list">
