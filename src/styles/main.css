@@ -600,17 +600,13 @@ body {
 /* Two-column row: right-aligned label | controls */
 .settings-row-ia {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   margin-bottom: 10px;
 }
 
 .settings-row-ia:last-child {
   margin-bottom: 0;
-}
-
-.settings-row-ia-top {
-  align-items: flex-start;
 }
 
 .settings-row-label {
@@ -620,10 +616,6 @@ body {
   font-size: 13px;
   color: var(--text);
   flex-shrink: 0;
-  padding-top: 1px;
-}
-
-.settings-row-ia-top .settings-row-label {
   padding-top: 8px;
 }
 
@@ -680,45 +672,20 @@ body {
   text-decoration: underline;
 }
 
-.settings-hint-muted {
-  display: block;
-  margin-top: 2px;
-  opacity: 0.6;
-  font-size: 10px;
-}
 
-.settings-code-block {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 8px;
-  margin: 4px 0 2px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-all;
-  cursor: pointer;
-  position: relative;
-  transition: border-color 0.15s;
-}
-
-.settings-code-block:hover {
-  border-color: var(--accent);
-}
-
-.settings-code-block.copied {
-  border-color: var(--accent);
-}
-
-.settings-code-block.copied::after {
-  content: "Copied!";
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  font-size: 9px;
+.settings-copy-link {
   color: var(--accent);
-  font-family: var(--font-mono);
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 11px;
+}
+
+.settings-copy-link:hover {
+  text-decoration: underline;
+}
+
+.settings-copy-link.copied {
+  color: var(--text-muted);
 }
 
 .settings-input {
