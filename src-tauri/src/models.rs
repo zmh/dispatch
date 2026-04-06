@@ -67,6 +67,7 @@ pub struct Settings {
     pub font: Option<String>,
     pub font_size: Option<String>,
     pub open_in_slack_app: Option<bool>,
+    pub notifications_enabled: Option<bool>,
 }
 
 impl Default for Settings {
@@ -85,6 +86,7 @@ impl Default for Settings {
             font: Some("system".to_string()),
             font_size: Some("s".to_string()),
             open_in_slack_app: Some(false),
+            notifications_enabled: Some(true),
         }
     }
 }

@@ -341,6 +341,7 @@ impl Database {
             font: self.get_setting("font")?.or_else(|| Some("system".to_string())),
             font_size: self.get_setting("font_size")?.or_else(|| Some("s".to_string())),
             open_in_slack_app: self.get_setting("open_in_slack_app")?.map(|v| v == "true").or(Some(false)),
+            notifications_enabled: self.get_setting("notifications_enabled")?.map(|v| v == "true").or(Some(true)),
         })
     }
 
@@ -410,8 +411,24 @@ impl Database {
         if let Some(val) = settings.open_in_slack_app {
             self.set_setting("open_in_slack_app", if val { "true" } else { "false" })?;
         }
+        if let Some(val) = settings.notifications_enabled {
+            self.set_setting("notifications_enabled", if val { "true" } else { "false" })?;
+        }
 
         Ok(())
+    }
+
+    pub fn unsnooze_due_messages(&self) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let count = conn.execute(
+            "UPDATE messages SET status = 'inbox', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?1",
+            params![now],
+        ).map_err(|e| e.to_string())?;
+        Ok(count)
     }
 
     pub fn reassign_category_to_other(&self, category: &str) -> Result<(), String> {

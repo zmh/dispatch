@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Message,
   MessageCounts,
@@ -213,6 +214,16 @@ export function useMessages() {
       if (refreshInterval.current) clearInterval(refreshInterval.current);
     };
   }, [doRefresh]);
+
+  // Refresh when snoozed messages return (from background checker)
+  useEffect(() => {
+    const unlisten = listen("snooze-returned", () => {
+      fetchMessages();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [fetchMessages]);
 
   return {
     tab,

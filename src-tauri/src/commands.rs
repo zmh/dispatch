@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tauri::State;
+use tauri_plugin_notification::NotificationExt;
 
 use crate::classifier;
 use crate::models::{
@@ -87,7 +88,7 @@ pub async fn get_message_counts(
 }
 
 #[tauri::command]
-pub async fn refresh_inbox(state: State<'_, AppState>) -> Result<RefreshResult, String> {
+pub async fn refresh_inbox(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<RefreshResult, String> {
     let settings = state.db.get_settings()?;
     let mut result = RefreshResult {
         new_messages: 0,
@@ -152,6 +153,19 @@ pub async fn refresh_inbox(state: State<'_, AppState>) -> Result<RefreshResult, 
         let unclassified = state.db.get_unclassified_messages()?;
         for msg in &unclassified {
             state.db.update_classification(&msg.id, "other")?;
+        }
+    }
+
+    // Send notification for new messages
+    if result.new_messages > 0 {
+        let enabled = settings.notifications_enabled.unwrap_or(true);
+        if enabled {
+            let (title, body) = if result.new_messages == 1 {
+                ("New message".to_string(), "1 new message in your inbox".to_string())
+            } else {
+                (format!("{} new messages", result.new_messages), format!("{} new messages in your inbox", result.new_messages))
+            };
+            let _ = app.notification().builder().title(&title).body(&body).show();
         }
     }
 
