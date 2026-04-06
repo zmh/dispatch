@@ -1681,7 +1681,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "haystack"
+name = "dispatch"
 version = "0.1.0"
 dependencies = [
  "chrono",

@@ -21,13 +21,13 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog about-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="about-icon">
-          <img src="/icon.png" alt="Haystack" width={64} height={64} />
+          <img src="/icon.png" alt="Dispatch" width={64} height={64} />
         </div>
-        <div className="about-name">Haystack</div>
+        <div className="about-name">Dispatch</div>
         <div className="about-version">Version {version}</div>
         <div className="about-description">CEO Inbox — Aggregated message triage</div>
         <div className="about-links">
-          <button className="about-link" onClick={() => handleLink("https://github.com/zmh/haystack")}>
+          <button className="about-link" onClick={() => handleLink("https://github.com/zmh/dispatch")}>
             GitHub
           </button>
           <span className="about-link-sep">&middot;</span>

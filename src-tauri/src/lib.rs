@@ -13,12 +13,26 @@ use tauri_plugin_notification::NotificationExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("haystack");
+    let data_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let app_dir = data_dir.join("dispatch");
+
+    // Migrate from old "haystack" data directory if it exists
+    let old_app_dir = data_dir.join("haystack");
+    if old_app_dir.exists() && !app_dir.exists() {
+        std::fs::rename(&old_app_dir, &app_dir)
+            .expect("Failed to migrate haystack data directory to dispatch");
+    }
+
     std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
 
-    let db_path = app_dir.join("haystack.db");
+    // Migrate old database filename if it exists
+    let old_db_path = app_dir.join("haystack.db");
+    let db_path = app_dir.join("dispatch.db");
+    if old_db_path.exists() && !db_path.exists() {
+        std::fs::rename(&old_db_path, &db_path)
+            .expect("Failed to migrate haystack.db to dispatch.db");
+    }
     let db = storage::Database::new(db_path.to_str().unwrap())
         .expect("Failed to initialize database");
 
@@ -31,7 +45,7 @@ pub fn run() {
         .setup(|app| {
             // App submenu
             let about_item =
-                MenuItem::with_id(app, "about", "About Haystack", true, None::<&str>)?;
+                MenuItem::with_id(app, "about", "About Dispatch", true, None::<&str>)?;
             let sep_about = PredefinedMenuItem::separator(app)?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+Comma"))?;
@@ -40,10 +54,10 @@ pub fn run() {
             let hide_others = PredefinedMenuItem::hide_others(app, None)?;
             let show_all = PredefinedMenuItem::show_all(app, None)?;
             let sep_quit = PredefinedMenuItem::separator(app)?;
-            let quit = PredefinedMenuItem::quit(app, Some("Quit Haystack"))?;
+            let quit = PredefinedMenuItem::quit(app, Some("Quit Dispatch"))?;
             let app_submenu = Submenu::with_items(
                 app,
-                "Haystack",
+                "Dispatch",
                 true,
                 &[&about_item, &sep_about, &settings_item, &separator, &hide, &hide_others, &show_all, &sep_quit, &quit],
             )?;
