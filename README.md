@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="appicons/Icon-256.png" width="128" height="128" alt="Haystack">
+<img src="appicons/Icon-256.png" width="128" height="128" alt="Dispatch">
 
-# Haystack
+# Dispatch
 
 **Never miss a Slack message.**
 
@@ -11,7 +11,7 @@ Keyboard-driven speed. AI-powered triage. Built for macOS.
 
 <br>
 
-<a href="https://github.com/zmh/haystack/releases/latest">
+<a href="https://github.com/zmh/dispatch/releases/latest">
   <img src="https://img.shields.io/badge/Download_for_Mac-0a84ff?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac">
 </a>
 
@@ -29,7 +29,7 @@ Create custom split inboxes with keyword, sender, and channel-based rules. Just 
 
 ### Intelligent Classification
 
-If you want, Haystack can use Claude to further classify important messages. That way you'll see everything important, even if it doesn't mention you directly.
+If you want, Dispatch can use Claude to further classify important messages. That way you'll see everything important, even if it doesn't mention you directly.
 
 ### Snooze, Star, Done
 
