@@ -362,6 +362,7 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
   const currentFont = settings.font || "system";
 
   const THEMES = [
+    { key: "system", label: "Auto" },
     { key: "light", label: "Light", bg: "#ffffff", surface: "#f5f5f7", accent: "#007aff" },
     { key: "dark", label: "Dark", bg: "#1c1c1e", surface: "#2c2c2e", accent: "#0a84ff" },
     { key: "black", label: "Black", bg: "#000000", surface: "#1c1c1e", accent: "#0a84ff" },
@@ -424,11 +425,18 @@ export function Settings({ onClose, onCategoriesChanged }: SettingsProps) {
                       onClick={() => setTheme(t.key)}
                       title={t.label}
                     >
-                      <div className="swatch-preview">
-                        <div className="swatch-bg" style={{ background: t.bg }} />
-                        <div className="swatch-surface" style={{ background: t.surface }} />
-                        <div className="swatch-accent" style={{ background: t.accent }} />
-                      </div>
+                      {t.key === "system" ? (
+                        <div className="swatch-preview swatch-preview-split">
+                          <div className="swatch-half-light" />
+                          <div className="swatch-half-dark" />
+                        </div>
+                      ) : (
+                        <div className="swatch-preview">
+                          <div className="swatch-bg" style={{ background: ("bg" in t) ? t.bg : undefined }} />
+                          <div className="swatch-surface" style={{ background: ("surface" in t) ? t.surface : undefined }} />
+                          <div className="swatch-accent" style={{ background: ("accent" in t) ? t.accent : undefined }} />
+                        </div>
+                      )}
                       <span className="swatch-label">{t.label}</span>
                     </button>
                   ))}
