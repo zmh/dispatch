@@ -373,11 +373,19 @@ pub async fn fetch_slack_messages(
                 let ts = ts_float as i64;
                 let body = slack_to_plain(&m.text);
                 let body_html = Some(slack_to_html(&m.text));
+                // DM channels show up with user-ID-like names (e.g. "U0SCBPQTXML")
+                let channel_name = match &m.channel.name {
+                    Some(name) if name.len() >= 9 && name.starts_with('U') && name.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                        Some("DM".to_string())
+                    }
+                    other => other.clone(),
+                };
+
                 all_messages.push(Message {
                     id: msg_id,
                     source: "slack".to_string(),
                     sender: m.username.unwrap_or_else(|| "unknown".to_string()),
-                    subject: m.channel.name,
+                    subject: channel_name,
                     body,
                     body_html,
                     permalink: m.permalink,
