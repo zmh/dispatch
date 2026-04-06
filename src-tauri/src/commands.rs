@@ -325,17 +325,7 @@ pub async fn search_slack_users(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SlackUser>, String> {
-    // Search Slack API directly — no cache needed for users
-    let settings = state.db.get_settings()?;
-    let token = settings
-        .slack_token
-        .as_deref()
-        .ok_or("Slack token not configured")?;
-    let cookie = settings
-        .slack_cookie
-        .as_deref()
-        .ok_or("Slack cookie not configured")?;
-    slack::search_users_live(token, cookie, &query).await
+    state.db.search_slack_users(&query)
 }
 
 #[tauri::command]
@@ -343,17 +333,7 @@ pub async fn search_slack_channels(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SlackChannel>, String> {
-    // Search Slack API directly for channels (searches ALL channels, not just member channels)
-    let settings = state.db.get_settings()?;
-    let token = settings
-        .slack_token
-        .as_deref()
-        .ok_or("Slack token not configured")?;
-    let cookie = settings
-        .slack_cookie
-        .as_deref()
-        .ok_or("Slack cookie not configured")?;
-    slack::search_channels_live(token, cookie, &query).await
+    state.db.search_slack_channels(&query)
 }
 
 #[tauri::command]
