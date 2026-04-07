@@ -16,6 +16,14 @@ function formatRelativeTime(timestamp: number): string {
   return `${Math.floor(diff / 604800)}w ago`;
 }
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
   if (!message) {
     return (
@@ -50,7 +58,10 @@ export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
             </button>
           )}
         </div>
-        <div className="preview-sender">{message.sender}</div>
+        <div className="preview-sender">
+          <span className="preview-avatar">{getInitials(message.sender)}</span>
+          <span>{message.sender}</span>
+        </div>
       </div>
 
       <div className="preview-body">
