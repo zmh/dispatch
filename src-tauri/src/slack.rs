@@ -1,5 +1,7 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::models::{Message, SlackChannel, SlackFilter, SlackUser};
@@ -103,6 +105,45 @@ struct ResponseMetadata {
     next_cursor: Option<String>,
 }
 
+/// Slack emoji shortcodes that differ from the standard shortcodes in the `emojis` crate.
+/// Maps Slack-specific names to either the standard shortcode (looked up via the crate)
+/// or directly to a Unicode emoji string.
+static SLACK_EMOJI_ALIASES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    HashMap::from([
+        // Thumbs
+        ("thumbup", "thumbsup"),
+        ("thumbdown", "thumbsdown"),
+        // Faces
+        ("thinking_face", "thinking"),
+        ("simple_smile", "slightly_smiling_face"),
+        ("grinning_face_with_smiling_eyes", "grinning"),
+        ("face_with_rolling_eyes", "rolling_eyes"),
+        ("upside_down_face", "upside_down"),
+        ("nerd_face", "nerd"),
+        ("face_with_thermometer", "thermometer_face"),
+        ("slightly_frowning_face", "frowning"),
+        ("zipper_mouth_face", "zipper_mouth"),
+        ("money_mouth_face", "money_mouth"),
+        ("face_with_head_bandage", "head_bandage"),
+        ("hugging_face", "hugging"),
+        // Gestures
+        ("raised_hand_with_fingers_splayed", "hand_splayed"),
+        ("reversed_hand_with_middle_finger_extended", "middle_finger"),
+        ("sign_of_the_horns", "metal"),
+        ("writing_hand", "writing"),
+        // Objects / symbols
+        ("lower_left_paintbrush", "paintbrush"),
+        ("old_key", "key2"),
+        ("memo", "pencil"),
+        ("heavy_exclamation_mark", "exclamation"),
+        // Misc commonly used in Slack
+        ("male-technologist", "man_technologist"),
+        ("female-technologist", "woman_technologist"),
+        ("male-detective", "man_detective"),
+        ("female-detective", "woman_detective"),
+    ])
+});
+
 /// Skin tone modifier Unicode codepoints (Slack uses :skin-tone-2: through :skin-tone-6:).
 fn skin_tone_modifier(n: u32) -> Option<char> {
     match n {
@@ -145,8 +186,13 @@ fn convert_emoji_shortcodes(text: &str) -> String {
                 }
             }
 
-            // Look up the emoji by shortcode
-            if let Some(emoji) = emojis::get_by_shortcode(name) {
+            // Look up the emoji by shortcode, falling back to Slack aliases
+            let emoji = emojis::get_by_shortcode(name).or_else(|| {
+                SLACK_EMOJI_ALIASES
+                    .get(name)
+                    .and_then(|alias| emojis::get_by_shortcode(alias))
+            });
+            if let Some(emoji) = emoji {
                 result.push_str(emoji.as_str());
                 remaining = &after_colon[end + 1..];
             } else {
