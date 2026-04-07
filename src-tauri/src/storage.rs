@@ -602,19 +602,6 @@ impl Database {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn append_slack_users(&self, users: &[SlackUser]) -> Result<(), String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let mut stmt = conn
-            .prepare("INSERT OR REPLACE INTO slack_users_cache (id, name, real_name) VALUES (?1, ?2, ?3)")
-            .map_err(|e| e.to_string())?;
-        for user in users {
-            stmt.execute(params![user.id, user.name, user.real_name])
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
     pub fn append_slack_channels(&self, channels: &[SlackChannel]) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn

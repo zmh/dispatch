@@ -33,7 +33,7 @@ pub fn run() {
         std::fs::rename(&old_db_path, &db_path)
             .expect("Failed to migrate haystack.db to dispatch.db");
     }
-    let db = storage::Database::new(db_path.to_str().unwrap())
+    let db = storage::Database::new(db_path.to_str().expect("Database path contains invalid UTF-8"))
         .expect("Failed to initialize database");
 
     tauri::Builder::default()

@@ -1,3 +1,4 @@
+import DOMPurify from "dompurify";
 import { Message } from "../lib/tauri";
 
 interface MessagePreviewProps {
@@ -84,7 +85,7 @@ export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
         {message.body_html ? (
           <div
             className="preview-html"
-            dangerouslySetInnerHTML={{ __html: message.body_html }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.body_html) }}
           />
         ) : (
           <pre className="preview-text">{message.body}</pre>

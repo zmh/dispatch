@@ -348,7 +348,7 @@ pub async fn fetch_slack_messages(
 
     let thirty_days_ago = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| format!("System time error: {}", e))?
         .as_secs()
         - (30 * 86400);
     let cutoff_date = {
@@ -364,7 +364,7 @@ pub async fn fetch_slack_messages(
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|e| format!("System time error: {}", e))?
         .as_secs() as i64;
 
     let mut all_messages = Vec::new();
@@ -373,7 +373,6 @@ pub async fn fetch_slack_messages(
 
     // Run each filter as a separate query to avoid OR/grouping issues
     for query in &queries {
-        eprintln!("[fetch_slack_messages] query: {}", query);
         let mut page: u32 = 1;
 
         loop {
@@ -398,8 +397,6 @@ pub async fn fetch_slack_messages(
                 .map_err(|e| format!("Failed to parse Slack response: {}", e))?;
 
             if !data.ok {
-                eprintln!("[fetch_slack_messages] error for query '{}': {}",
-                    query, data.error.as_deref().unwrap_or("unknown"));
                 break;
             }
 
@@ -409,8 +406,6 @@ pub async fn fetch_slack_messages(
             };
 
             let total_pages = slack_messages.paging.map(|p| p.pages).unwrap_or(1);
-            eprintln!("[fetch_slack_messages] page {}/{}, got {} matches",
-                page, total_pages, slack_messages.matches.len());
 
             for m in slack_messages.matches {
                 let msg_id = format!("slack:{}", m.ts);
@@ -473,7 +468,6 @@ pub async fn fetch_slack_messages(
     if !user_id_to_msg_indices.is_empty() {
         let cookie_headers = build_cookie_header(cookie)?;
         let unique_ids: Vec<String> = user_id_to_msg_indices.keys().cloned().collect();
-        eprintln!("[fetch_slack_messages] fetching avatars for {} unique users", unique_ids.len());
         for uid in &unique_ids {
             if let Ok(resp) = client
                 .post("https://slack.com/api/users.info")
@@ -502,7 +496,6 @@ pub async fn fetch_slack_messages(
         }
     }
 
-    eprintln!("[fetch_slack_messages] total: {} messages from {} queries", all_messages.len(), queries.len());
     Ok(all_messages)
 }
 
@@ -630,10 +623,6 @@ pub async fn search_users_live(
         }
     }
 
-    eprintln!("[search_users_live] final {} users: {:?}",
-        users.len(),
-        users.iter().take(5).map(|u| format!("{}({}/{})", u.id, u.name, u.real_name)).collect::<Vec<_>>()
-    );
     Ok(users)
 }
 
@@ -664,8 +653,6 @@ pub async fn search_channels_live(
         .text()
         .await
         .map_err(|e| format!("Failed to read search.modules response: {}", e))?;
-
-    eprintln!("[search.modules/channels] raw response (first 500 chars): {}", &text[..text.len().min(500)]);
 
     let raw: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
         format!("Failed to parse search.modules JSON: {}", e)
@@ -715,7 +702,6 @@ pub async fn search_channels_live(
         }
     }
 
-    eprintln!("[search.modules/channels] parsed {} channels", channels.len());
     Ok(channels)
 }
 
