@@ -40,7 +40,12 @@ export function MessageList({
   if (messages.length === 0) {
     return (
       <div className="message-list-empty" style={style}>
-        <div className="empty-icon">✓</div>
+        <div className="empty-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="11" />
+            <path d="M7.5 12.5l3 3 6-6" fill="none" stroke="var(--bg)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
         <div>No messages. You're at inbox zero!</div>
         <div className="empty-hint">Press r to refresh</div>
       </div>
