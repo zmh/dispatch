@@ -215,6 +215,23 @@ body {
   cursor: pointer;
   border-radius: 4px;
   -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-action svg {
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tab-action .spin {
+  animation: spin 1s linear infinite;
 }
 
 .tab-action:hover {
@@ -332,7 +349,7 @@ body {
 
 .empty-icon {
   font-size: 32px;
-  color: var(--success);
+  color: var(--text-dim);
 }
 
 .empty-hint {
