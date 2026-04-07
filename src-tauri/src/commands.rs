@@ -5,7 +5,7 @@ use tauri_plugin_notification::NotificationExt;
 use crate::classifier;
 use crate::models::{
     Category, CategoryRule, Message, MessageCounts, RefreshResult, Settings, SlackCacheStatus,
-    SlackChannel, SlackUser,
+    SlackChannel, SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -308,6 +308,14 @@ pub async fn save_settings(
     settings: Settings,
 ) -> Result<bool, String> {
     state.db.save_settings(&settings)
+}
+
+#[tauri::command]
+pub async fn test_slack_connection(
+    token: String,
+    cookie: String,
+) -> Result<SlackConnectionInfo, String> {
+    slack::test_connection(&token, &cookie).await
 }
 
 #[tauri::command]

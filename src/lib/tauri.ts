@@ -140,3 +140,14 @@ export async function getSlackCacheStatus(): Promise<SlackCacheStatus> {
 export async function setWindowTheme(theme: string): Promise<void> {
   return invoke("set_window_theme", { theme });
 }
+
+export interface SlackConnectionInfo {
+  team: string;
+  user: string;
+  team_id: string;
+  user_id: string;
+}
+
+export async function testSlackConnection(token: string, cookie: string): Promise<SlackConnectionInfo> {
+  return invoke("test_slack_connection", { token, cookie });
+}

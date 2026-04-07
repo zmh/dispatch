@@ -627,6 +627,43 @@ pub async fn search_channels_live(
     Ok(channels)
 }
 
+/// Test Slack connection and return workspace + user info.
+pub async fn test_connection(token: &str, cookie: &str) -> Result<crate::models::SlackConnectionInfo, String> {
+    let client = reqwest::Client::new();
+    let headers = build_cookie_header(cookie)?;
+
+    let response = client
+        .post("https://slack.com/api/auth.test")
+        .headers(headers)
+        .form(&[("token", token)])
+        .send()
+        .await
+        .map_err(|e| format!("auth.test failed: {}", e))?;
+
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read auth.test response: {}", e))?;
+
+    let raw: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("Failed to parse auth.test: {}", e))?;
+
+    if !raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let err = raw
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        return Err(format!("auth.test error: {}", err));
+    }
+
+    let team = raw.get("team").and_then(|v| v.as_str()).unwrap_or("Unknown workspace").to_string();
+    let user = raw.get("user").and_then(|v| v.as_str()).unwrap_or("Unknown user").to_string();
+    let team_id = raw.get("team_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let user_id = raw.get("user_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    Ok(crate::models::SlackConnectionInfo { team, user, team_id, user_id })
+}
+
 /// Call auth.test to get the team ID for the current workspace.
 pub async fn get_team_id(token: &str, cookie: &str) -> Result<String, String> {
     let client = reqwest::Client::new();

@@ -141,3 +141,11 @@ pub struct SlackCacheStatus {
     pub user_count: usize,
     pub channel_count: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlackConnectionInfo {
+    pub team: String,
+    pub user: String,
+    pub team_id: String,
+    pub user_id: String,
+}

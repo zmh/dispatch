@@ -7,8 +7,9 @@ import { MessagePreview } from "./components/MessagePreview";
 import { SnoozeDialog } from "./components/SnoozeDialog";
 import { Settings } from "./components/Settings";
 import { AboutDialog } from "./components/AboutDialog";
+import { OnboardingWizard } from "./components/OnboardingWizard";
 import { listen } from "@tauri-apps/api/event";
-import { openLink, getSettings } from "./lib/tauri";
+import { openLink, getSettings, Settings as SettingsType } from "./lib/tauri";
 
 function App() {
   const {
@@ -48,8 +49,27 @@ function App() {
   const [showSnooze, setShowSnooze] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [settingsChecked, setSettingsChecked] = useState(false);
+  const [onboardingSettings, setOnboardingSettings] = useState<SettingsType | undefined>(undefined);
   const [panelWidth, setPanelWidth] = useState(400);
   const isResizing = useRef(false);
+
+  // First-run detection
+  useEffect(() => {
+    (async () => {
+      try {
+        const settings = await getSettings();
+        if (!settings.slack_token && !settings.slack_cookie) {
+          setShowOnboarding(true);
+        }
+      } catch (e) {
+        console.error("Failed to check settings:", e);
+      } finally {
+        setSettingsChecked(true);
+      }
+    })();
+  }, []);
 
   // Intercept all <a> clicks and open them in the default browser
   useEffect(() => {
@@ -156,6 +176,34 @@ function App() {
     }
   };
 
+  const handleOnboardingComplete = useCallback(() => {
+    setShowOnboarding(false);
+    setOnboardingSettings(undefined);
+    doRefresh();
+  }, [doRefresh]);
+
+  const handleRunSetup = useCallback(async () => {
+    setShowSettings(false);
+    try {
+      const settings = await getSettings();
+      setOnboardingSettings(settings);
+    } catch {}
+    setShowOnboarding(true);
+  }, []);
+
+  if (!settingsChecked) {
+    return <div className="app" />;
+  }
+
+  if (showOnboarding) {
+    return (
+      <OnboardingWizard
+        onComplete={handleOnboardingComplete}
+        initialSettings={onboardingSettings}
+      />
+    );
+  }
+
   return (
     <div className="app">
       <InboxTabs
@@ -229,6 +277,7 @@ function App() {
         <Settings
           onClose={() => setShowSettings(false)}
           onCategoriesChanged={loadCategories}
+          onRunSetup={handleRunSetup}
         />
       )}
 
