@@ -374,9 +374,13 @@ pub async fn fetch_slack_messages(
                 let body = slack_to_plain(&m.text);
                 let body_html = Some(slack_to_html(&m.text));
                 // DM channels show up with user-ID-like names (e.g. "U0SCBPQTXML")
+                // Multi-person DMs use "mpdm-" prefix (e.g. "mpdm-zach.hamed--matt--sophie-1")
                 let channel_name = match &m.channel.name {
                     Some(name) if name.len() >= 9 && name.starts_with('U') && name.chars().all(|c| c.is_ascii_alphanumeric()) => {
                         Some("DM".to_string())
+                    }
+                    Some(name) if name.starts_with("mpdm-") => {
+                        Some("Group DM".to_string())
                     }
                     other => other.clone(),
                 };

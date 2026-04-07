@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="appicons/Icon-256.png" width="128" height="128" alt="Dispatch">
+<img src="appicons/Icon-256.png" width="128" height="128" alt="Dispatch" style="border-radius: 22%;">
 
 # Dispatch
 
