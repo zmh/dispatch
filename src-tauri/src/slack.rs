@@ -68,6 +68,7 @@ struct SlackMatch {
     channel: SlackChannelInfo,
     permalink: Option<String>,
     username: Option<String>,
+    user: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,6 +323,7 @@ pub async fn fetch_slack_messages(
 
     let mut all_messages = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
+    let mut user_id_to_msg_indices: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
 
     // Run each filter as a separate query to avoid OR/grouping issues
     for query in &queries {
@@ -393,6 +395,7 @@ pub async fn fetch_slack_messages(
                     body,
                     body_html,
                     permalink: m.permalink,
+                    avatar_url: None, // filled in below via batch user lookup
                     timestamp: ts,
                     classification: "unclassified".to_string(),
                     status: "inbox".to_string(),
@@ -400,6 +403,16 @@ pub async fn fetch_slack_messages(
                     snoozed_until: None,
                     created_at: now,
                 });
+                // Track user ID for avatar lookup
+                if let Some(ref uid) = m.user {
+                    if !uid.is_empty() {
+                        let idx = all_messages.len() - 1;
+                        user_id_to_msg_indices
+                            .entry(uid.clone())
+                            .or_insert_with(Vec::new)
+                            .push(idx);
+                    }
+                }
             }
 
             // Cap at 3 pages per query (300 messages) to keep things fast
@@ -407,6 +420,39 @@ pub async fn fetch_slack_messages(
                 break;
             }
             page += 1;
+        }
+    }
+
+    // Batch-fetch avatar URLs for unique user IDs
+    if !user_id_to_msg_indices.is_empty() {
+        let cookie_headers = build_cookie_header(cookie)?;
+        let unique_ids: Vec<String> = user_id_to_msg_indices.keys().cloned().collect();
+        eprintln!("[fetch_slack_messages] fetching avatars for {} unique users", unique_ids.len());
+        for uid in &unique_ids {
+            if let Ok(resp) = client
+                .post("https://slack.com/api/users.info")
+                .headers(cookie_headers.clone())
+                .form(&[("token", token), ("user", uid.as_str())])
+                .send()
+                .await
+            {
+                if let Ok(text) = resp.text().await {
+                    if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(avatar) = raw
+                            .get("user")
+                            .and_then(|u| u.get("profile"))
+                            .and_then(|p| p.get("image_72"))
+                            .and_then(|v| v.as_str())
+                        {
+                            if let Some(indices) = user_id_to_msg_indices.get(uid) {
+                                for &idx in indices {
+                                    all_messages[idx].avatar_url = Some(avatar.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

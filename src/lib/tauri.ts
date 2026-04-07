@@ -8,6 +8,7 @@ export interface Message {
   body: string;
   body_html: string | null;
   permalink: string | null;
+  avatar_url: string | null;
   timestamp: number;
   classification: string;
   status: string;
