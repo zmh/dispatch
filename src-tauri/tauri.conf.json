@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Dispatch",
   "version": "0.1.0",
-  "identifier": "com.zacharyhamed.dispatch",
+  "identifier": "com.dispatch.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' https://*.slack-edge.com https://avatars.slack-edge.com https://secure.gravatar.com data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://slack.com https://api.anthropic.com"
     }
   },
   "bundle": {

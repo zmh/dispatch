@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Settings,
   SlackFilter,
@@ -74,7 +74,7 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  });
+  }, [step]);
 
   const handleTestConnection = async () => {
     setTesting(true);
