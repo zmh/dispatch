@@ -217,7 +217,7 @@ body {
   -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 5px;
 }
 
 .tab-action svg {
@@ -232,6 +232,8 @@ body {
 
 .tab-action .spin {
   animation: spin 1s linear infinite;
+  transform-origin: center;
+  transform-box: fill-box;
 }
 
 .tab-action:hover {
