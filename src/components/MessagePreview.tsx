@@ -40,8 +40,28 @@ export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
   return (
     <div className="preview-panel">
       <div className="preview-header">
-        <div className="preview-header-top">
-          <span className="preview-source">{source}</span>
+        <div className="preview-header-row">
+          {message.avatar_url ? (
+            <img className="preview-avatar-img" src={message.avatar_url} alt="" />
+          ) : (
+            <span className="preview-avatar">{getInitials(message.sender)}</span>
+          )}
+          <div className="preview-sender-info">
+            <span
+              className="preview-sender-name"
+              onClick={() => message.permalink && onOpenLink(message.permalink)}
+              title="Open in Slack"
+            >
+              {message.sender}
+            </span>
+            <span
+              className="preview-source"
+              onClick={() => message.permalink && onOpenLink(message.permalink)}
+              title="Open in Slack"
+            >
+              {source}
+            </span>
+          </div>
           <span className="preview-star">{message.starred ? "★" : ""}</span>
           <span className="preview-time">{formatRelativeTime(message.timestamp)}</span>
           {message.permalink && (
@@ -57,14 +77,6 @@ export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
               </svg>
             </button>
           )}
-        </div>
-        <div className="preview-sender">
-          {message.avatar_url ? (
-            <img className="preview-avatar-img" src={message.avatar_url} alt="" />
-          ) : (
-            <span className="preview-avatar">{getInitials(message.sender)}</span>
-          )}
-          <span>{message.sender}</span>
         </div>
       </div>
 
