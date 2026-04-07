@@ -25,7 +25,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
         </div>
         <div className="about-name">Dispatch</div>
         <div className="about-version">Version {version}</div>
-        <div className="about-description">CEO Inbox — Aggregated message triage</div>
+        <div className="about-description">A focused inbox for Slack that cuts through the noise.</div>
         <div className="about-links">
           <button className="about-link" onClick={() => handleLink("https://github.com/zmh/dispatch")}>
             GitHub
@@ -35,7 +35,7 @@ export function AboutDialog({ onClose }: AboutDialogProps) {
             zmh.org
           </button>
         </div>
-        <div className="about-copyright">&copy; 2025 Zachary Hamed. All rights reserved.</div>
+        <div className="about-copyright">&copy; 2026 Zachary Hamed. All rights reserved.</div>
         <div className="dialog-footer">
           <button className="dialog-cancel" onClick={onClose}>Close</button>
         </div>
