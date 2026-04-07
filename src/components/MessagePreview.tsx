@@ -59,7 +59,11 @@ export function MessagePreview({ message, onOpenLink }: MessagePreviewProps) {
           )}
         </div>
         <div className="preview-sender">
-          <span className="preview-avatar">{getInitials(message.sender)}</span>
+          {message.avatar_url ? (
+            <img className="preview-avatar-img" src={message.avatar_url} alt="" />
+          ) : (
+            <span className="preview-avatar">{getInitials(message.sender)}</span>
+          )}
           <span>{message.sender}</span>
         </div>
       </div>

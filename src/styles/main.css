@@ -967,29 +967,39 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 24px;
 }
 
 .preview-source {
   color: var(--accent);
   font-size: var(--font-size);
   font-weight: 600;
+  line-height: 1;
 }
 
 .preview-star {
   color: var(--star);
   font-size: var(--font-size);
+  line-height: 1;
 }
 
 .preview-time {
   color: var(--text-dim);
   font-size: var(--font-size);
   margin-left: auto;
+  line-height: 1;
+}
+
+.preview-open-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .preview-sender {
   color: var(--text-muted);
   font-size: var(--font-size);
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1008,6 +1018,14 @@ body {
   font-weight: 600;
   letter-spacing: 0.5px;
   flex-shrink: 0;
+}
+
+.preview-avatar-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
 }
 
 .preview-body {

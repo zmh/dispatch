@@ -60,14 +60,24 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_messages_snoozed ON messages(snoozed_until);",
         )
         .map_err(|e| e.to_string())?;
+
+        // Migration: add avatar_url column if missing
+        let has_avatar_url: bool = conn
+            .prepare("SELECT avatar_url FROM messages LIMIT 0")
+            .is_ok();
+        if !has_avatar_url {
+            conn.execute_batch("ALTER TABLE messages ADD COLUMN avatar_url TEXT;")
+                .map_err(|e| e.to_string())?;
+        }
+
         Ok(())
     }
 
     pub fn insert_message(&self, msg: &Message) -> Result<bool, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let result = conn.execute(
-            "INSERT OR IGNORE INTO messages (id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT OR IGNORE INTO messages (id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 msg.id,
                 msg.source,
@@ -76,6 +86,7 @@ impl Database {
                 msg.body,
                 msg.body_html,
                 msg.permalink,
+                msg.avatar_url,
                 msg.timestamp,
                 msg.classification,
                 msg.status,
@@ -102,7 +113,7 @@ impl Database {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
                  FROM messages
                  WHERE classification = ?1 AND status = ?2
                  ORDER BY timestamp DESC",
@@ -119,12 +130,13 @@ impl Database {
                     body: row.get(4)?,
                     body_html: row.get(5)?,
                     permalink: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    classification: row.get(8)?,
-                    status: row.get(9)?,
-                    starred: row.get::<_, i32>(10)? != 0,
-                    snoozed_until: row.get(11)?,
-                    created_at: row.get(12)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -149,7 +161,7 @@ impl Database {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
                  FROM messages
                  WHERE status = ?1
                  ORDER BY timestamp DESC",
@@ -166,12 +178,13 @@ impl Database {
                     body: row.get(4)?,
                     body_html: row.get(5)?,
                     permalink: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    classification: row.get(8)?,
-                    status: row.get(9)?,
-                    starred: row.get::<_, i32>(10)? != 0,
-                    snoozed_until: row.get(11)?,
-                    created_at: row.get(12)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -185,7 +198,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
                  FROM messages
                  WHERE starred = 1
                  ORDER BY timestamp DESC",
@@ -202,12 +215,13 @@ impl Database {
                     body: row.get(4)?,
                     body_html: row.get(5)?,
                     permalink: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    classification: row.get(8)?,
-                    status: row.get(9)?,
-                    starred: row.get::<_, i32>(10)? != 0,
-                    snoozed_until: row.get(11)?,
-                    created_at: row.get(12)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -307,7 +321,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
                  FROM messages
                  WHERE classification = 'unclassified'
                  ORDER BY timestamp DESC",
@@ -324,12 +338,13 @@ impl Database {
                     body: row.get(4)?,
                     body_html: row.get(5)?,
                     permalink: row.get(6)?,
-                    timestamp: row.get(7)?,
-                    classification: row.get(8)?,
-                    status: row.get(9)?,
-                    starred: row.get::<_, i32>(10)? != 0,
-                    snoozed_until: row.get(11)?,
-                    created_at: row.get(12)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
                 })
             })
             .map_err(|e| e.to_string())?

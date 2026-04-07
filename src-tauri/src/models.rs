@@ -12,6 +12,7 @@ pub struct Message {
     pub body: String,
     pub body_html: Option<String>,
     pub permalink: Option<String>,
+    pub avatar_url: Option<String>,
     pub timestamp: i64,
     pub classification: String,
     pub status: String,
