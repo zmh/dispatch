@@ -34,6 +34,22 @@ jobs:
       - name: Build Tauri app
         run: npm run tauri build
 
+      - name: Ad-hoc sign app and DMG
+        run: |
+          # Ad-hoc sign the .app (deep, force) to ensure all nested binaries are signed
+          APP_PATH=$(find src-tauri/target/release/bundle/macos -name "*.app" -maxdepth 2 | head -n 1)
+          if [ -n "$APP_PATH" ]; then
+            echo "Signing app at $APP_PATH"
+            codesign --force --deep --sign - "$APP_PATH"
+            codesign --verify --deep --strict "$APP_PATH" && echo "App signature verified"
+          fi
+          # Ad-hoc sign the DMG as well
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" -maxdepth 2 | head -n 1)
+          if [ -n "$DMG_PATH" ]; then
+            echo "Signing DMG at $DMG_PATH"
+            codesign --force --sign - "$DMG_PATH"
+          fi
+
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
