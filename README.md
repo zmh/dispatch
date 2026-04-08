@@ -15,6 +15,12 @@ Keyboard-driven speed. AI-powered triage. Built for macOS.
   <img src="https://img.shields.io/badge/Download_for_Mac-0a84ff?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac">
 </a>
 
+<br>
+
+<img src="screenshots/inbox.png" width="600" alt="Dispatch inbox view">
+
+<img src="screenshots/settings.png" width="600" alt="Dispatch settings">
+
 </div>
 
 ---
