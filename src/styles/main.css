@@ -129,6 +129,166 @@
   --overlay-bg: rgba(0, 0, 0, 0.6);
 }
 
+/* ── Theme: Nord ── */
+[data-theme="nord"] {
+  --bg: #2e3440;
+  --bg-surface: #3b4252;
+  --bg-hover: #434c5e;
+  --bg-selected: #2e4a6e;
+  --text: #eceff4;
+  --text-muted: #d8dee9;
+  --text-dim: #7b88a1;
+  --accent: #88c0d0;
+  --accent-dim: #6ba8b8;
+  --star: #ebcb8b;
+  --border: #4c566a;
+  --error: #bf616a;
+  --success: #a3be8c;
+  --badge-bg: rgba(255, 255, 255, 0.15);
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Theme: Dracula ── */
+[data-theme="dracula"] {
+  --bg: #282a36;
+  --bg-surface: #343746;
+  --bg-hover: #44475a;
+  --bg-selected: #3d2d5c;
+  --text: #f8f8f2;
+  --text-muted: #bfbfbf;
+  --text-dim: #6272a4;
+  --accent: #bd93f9;
+  --accent-dim: #9b6fd9;
+  --star: #f1fa8c;
+  --border: #44475a;
+  --error: #ff5555;
+  --success: #50fa7b;
+  --badge-bg: rgba(255, 255, 255, 0.15);
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Theme: Catppuccin (Mocha) ── */
+[data-theme="catppuccin"] {
+  --bg: #1e1e2e;
+  --bg-surface: #2a2a3c;
+  --bg-hover: #353548;
+  --bg-selected: #3b2d50;
+  --text: #cdd6f4;
+  --text-muted: #a6adc8;
+  --text-dim: #6c7086;
+  --accent: #cba6f7;
+  --accent-dim: #a87dd8;
+  --star: #f9e2af;
+  --border: #45475a;
+  --error: #f38ba8;
+  --success: #a6e3a1;
+  --badge-bg: rgba(255, 255, 255, 0.12);
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Theme: Monokai ── */
+[data-theme="monokai"] {
+  --bg: #272822;
+  --bg-surface: #333428;
+  --bg-hover: #3e3d32;
+  --bg-selected: #3a4028;
+  --text: #f8f8f2;
+  --text-muted: #bfbfb6;
+  --text-dim: #75715e;
+  --accent: #a6e22e;
+  --accent-dim: #86b822;
+  --star: #e6db74;
+  --border: #49483e;
+  --error: #f92672;
+  --success: #a6e22e;
+  --badge-bg: rgba(255, 255, 255, 0.15);
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Theme: Cyberpunk ── */
+[data-theme="cyberpunk"] {
+  --bg: #0a0a1a;
+  --bg-surface: #141428;
+  --bg-hover: #1e1e38;
+  --bg-selected: #2a1040;
+  --text: #e0e0ff;
+  --text-muted: #9898cc;
+  --text-dim: #5858aa;
+  --accent: #ff2d95;
+  --accent-dim: #cc1a75;
+  --star: #ffdd00;
+  --border: #2a2a50;
+  --error: #ff1a1a;
+  --success: #00ff9f;
+  --badge-bg: rgba(255, 45, 149, 0.2);
+  --dialog-shadow: rgba(0, 0, 0, 0.7);
+  --overlay-bg: rgba(0, 0, 0, 0.7);
+}
+
+/* ── Theme: Retro Terminal ── */
+[data-theme="retro"] {
+  --bg: #0c0c0c;
+  --bg-surface: #1a1a1a;
+  --bg-hover: #252525;
+  --bg-selected: #0a2a0a;
+  --text: #33ff33;
+  --text-muted: #20cc20;
+  --text-dim: #0d880d;
+  --accent: #33ff33;
+  --accent-dim: #20cc20;
+  --star: #ffcc00;
+  --border: #1a3a1a;
+  --error: #ff3333;
+  --success: #33ff33;
+  --badge-bg: rgba(51, 255, 51, 0.15);
+  --dialog-shadow: rgba(0, 0, 0, 0.7);
+  --overlay-bg: rgba(0, 0, 0, 0.7);
+}
+
+/* ── Theme: Rose Pine ── */
+[data-theme="rose-pine"] {
+  --bg: #191724;
+  --bg-surface: #1f1d2e;
+  --bg-hover: #26233a;
+  --bg-selected: #2a2240;
+  --text: #e0def4;
+  --text-muted: #908caa;
+  --text-dim: #6e6a86;
+  --accent: #ea9a97;
+  --accent-dim: #d07a77;
+  --star: #f6c177;
+  --border: #26233a;
+  --error: #eb6f92;
+  --success: #9ccfd8;
+  --badge-bg: rgba(255, 255, 255, 0.12);
+  --dialog-shadow: rgba(0, 0, 0, 0.5);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
+/* ── Theme: Sunset ── */
+[data-theme="sunset"] {
+  --bg: #1a1220;
+  --bg-surface: #261a2e;
+  --bg-hover: #32233c;
+  --bg-selected: #3a1e30;
+  --text: #f0e0e8;
+  --text-muted: #b899aa;
+  --text-dim: #7a5a6a;
+  --accent: #ff7849;
+  --accent-dim: #d96038;
+  --star: #ffc940;
+  --border: #3a2a42;
+  --error: #ff4466;
+  --success: #66ddaa;
+  --badge-bg: rgba(255, 120, 73, 0.2);
+  --dialog-shadow: rgba(0, 0, 0, 0.6);
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+
 html, body, #root {
   height: 100%;
   overflow: hidden;
