@@ -30,13 +30,14 @@ Keyboard-driven speed. AI-powered triage. Built for macOS.
 Dispatch isn't signed with an Apple Developer ID, so macOS will block it on first launch. To install:
 
 1. Download the `.dmg` from the [latest release](https://github.com/zmh/dispatch/releases/latest)
-2. Open Terminal and run:
+2. Open the DMG and drag **Dispatch** to **Applications**
+3. Open Terminal and run:
    ```
-   xattr -cr ~/Downloads/Dispatch_*.dmg
+   xattr -cr /Applications/Dispatch.app
    ```
-3. Open the DMG and drag **Dispatch** to **Applications**
+4. Open Dispatch from Applications
 
-This removes the macOS quarantine attribute so Gatekeeper won't flag the app as "damaged" or unverified.
+Step 3 removes the macOS quarantine attribute so Gatekeeper won't flag the app as "damaged" or unverified.
 
 ---
 
