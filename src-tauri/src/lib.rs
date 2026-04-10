@@ -10,6 +10,7 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_updater::UpdaterExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,6 +40,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             db: Arc::new(db),
         })
@@ -46,6 +48,8 @@ pub fn run() {
             // App submenu
             let about_item =
                 MenuItem::with_id(app, "about", "About Dispatch", true, None::<&str>)?;
+            let check_updates_item =
+                MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?;
             let sep_about = PredefinedMenuItem::separator(app)?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+Comma"))?;
@@ -59,7 +63,7 @@ pub fn run() {
                 app,
                 "Dispatch",
                 true,
-                &[&about_item, &sep_about, &settings_item, &separator, &hide, &hide_others, &show_all, &sep_quit, &quit],
+                &[&about_item, &check_updates_item, &sep_about, &settings_item, &separator, &hide, &hide_others, &show_all, &sep_quit, &quit],
             )?;
 
             // Edit submenu (standard macOS text editing)
@@ -95,6 +99,28 @@ pub fn run() {
                     let _ = app_handle.emit("open-settings", ());
                 } else if event.id() == "about" {
                     let _ = app_handle.emit("open-about", ());
+                } else if event.id() == "check_updates" {
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let updater = match handle.updater() {
+                            Ok(u) => u,
+                            Err(e) => { eprintln!("Updater init failed: {}", e); return; }
+                        };
+                        match updater.check().await {
+                            Ok(Some(update)) => {
+                                let _ = handle.emit("update-available", update.version.clone());
+                                if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+                                    eprintln!("Failed to install update: {}", e);
+                                }
+                            }
+                            Ok(None) => {
+                                let _ = handle.emit("no-update", ());
+                            }
+                            Err(e) => {
+                                eprintln!("Update check failed: {}", e);
+                            }
+                        }
+                    });
                 }
             });
 
@@ -139,6 +165,23 @@ pub fn run() {
                         }
                         _ => {}
                     }
+                }
+            });
+
+            // Background update checker: wait 5s after startup, then check for updates
+            let update_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let updater = match update_handle.updater() {
+                    Ok(u) => u,
+                    Err(e) => { eprintln!("Updater init failed: {}", e); return; }
+                };
+                match updater.check().await {
+                    Ok(Some(update)) => {
+                        let _ = update_handle.emit("update-available", update.version.clone());
+                        let _ = update.download_and_install(|_, _| {}, || {}).await;
+                    }
+                    _ => {}
                 }
             });
 
