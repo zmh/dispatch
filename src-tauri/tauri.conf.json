@@ -26,7 +26,16 @@
       "csp": "default-src 'self'; img-src 'self' https://*.slack-edge.com https://avatars.slack-edge.com https://secure.gravatar.com data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://slack.com https://api.anthropic.com"
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/zmh/dispatch/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVFRThGODE4MEU3RkU1MApSV1JRL3VlQWdZL3VCZHpnRDMyUCtIakZqNnBrbWRtSjFKYUZMQlRNajBPbGhsZkZTWWxJUWZSQQo="
+    }
+  },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "icon": [
