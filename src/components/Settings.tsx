@@ -200,6 +200,14 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
     { key: "black", label: "Black", bg: "#000000", surface: "#1c1c1e", accent: "#0a84ff" },
     { key: "solarized-light", label: "Sol Light", bg: "#fdf6e3", surface: "#eee8d5", accent: "#268bd2" },
     { key: "solarized-dark", label: "Sol Dark", bg: "#002b36", surface: "#073642", accent: "#268bd2" },
+    { key: "nord", label: "Nord", bg: "#2e3440", surface: "#3b4252", accent: "#88c0d0" },
+    { key: "dracula", label: "Dracula", bg: "#282a36", surface: "#343746", accent: "#bd93f9" },
+    { key: "catppuccin", label: "Catppuccin", bg: "#1e1e2e", surface: "#2a2a3c", accent: "#cba6f7" },
+    { key: "monokai", label: "Monokai", bg: "#272822", surface: "#333428", accent: "#a6e22e" },
+    { key: "cyberpunk", label: "Cyberpunk", bg: "#0a0a1a", surface: "#141428", accent: "#ff2d95" },
+    { key: "retro", label: "Retro", bg: "#0c0c0c", surface: "#1a1a1a", accent: "#33ff33" },
+    { key: "rose-pine", label: "Rose Pine", bg: "#191724", surface: "#1f1d2e", accent: "#ea9a97" },
+    { key: "sunset", label: "Sunset", bg: "#1a1220", surface: "#261a2e", accent: "#ff7849" },
   ] as const;
 
   const FONTS = [
