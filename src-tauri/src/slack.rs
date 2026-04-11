@@ -676,13 +676,17 @@ pub async fn search_channels_live(
     let client = reqwest::Client::new();
     let headers = build_cookie_header(cookie)?;
 
+    // Replace dashes with spaces — Slack's search engine treats dashes as
+    // NOT operators, so "ai-news" would be interpreted as "ai NOT news".
+    let sanitized_query = query.replace('-', " ");
+
     // Try conversations.search (internal Slack API)
     let response = client
         .post("https://slack.com/api/search.modules")
         .headers(headers)
         .form(&[
             ("token", token),
-            ("query", query),
+            ("query", &sanitized_query),
             ("module", "channels"),
             ("count", "20"),
         ])
