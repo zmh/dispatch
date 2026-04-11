@@ -41,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db: Arc::new(db),
         })
@@ -102,15 +103,26 @@ pub fn run() {
                 } else if event.id() == "check_updates" {
                     let handle = app_handle.clone();
                     tauri::async_runtime::spawn(async move {
+                        let _ = handle.emit("update-checking", ());
                         let updater = match handle.updater() {
                             Ok(u) => u,
-                            Err(e) => { eprintln!("Updater init failed: {}", e); return; }
+                            Err(e) => {
+                                eprintln!("Updater init failed: {}", e);
+                                let _ = handle.emit("update-error", e.to_string());
+                                return;
+                            }
                         };
                         match updater.check().await {
                             Ok(Some(update)) => {
                                 let _ = handle.emit("update-available", update.version.clone());
-                                if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
-                                    eprintln!("Failed to install update: {}", e);
+                                match update.download_and_install(|_, _| {}, || {}).await {
+                                    Ok(_) => {
+                                        let _ = handle.emit("update-installed", update.version.clone());
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to install update: {}", e);
+                                        let _ = handle.emit("update-error", e.to_string());
+                                    }
                                 }
                             }
                             Ok(None) => {
@@ -118,6 +130,7 @@ pub fn run() {
                             }
                             Err(e) => {
                                 eprintln!("Update check failed: {}", e);
+                                let _ = handle.emit("update-error", e.to_string());
                             }
                         }
                     });
@@ -178,8 +191,11 @@ pub fn run() {
                 };
                 match updater.check().await {
                     Ok(Some(update)) => {
-                        let _ = update_handle.emit("update-available", update.version.clone());
-                        let _ = update.download_and_install(|_, _| {}, || {}).await;
+                        let version = update.version.clone();
+                        let _ = update_handle.emit("update-available", version.clone());
+                        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+                            let _ = update_handle.emit("update-installed", version);
+                        }
                     }
                     _ => {}
                 }

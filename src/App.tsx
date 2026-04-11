@@ -7,8 +7,10 @@ import { MessagePreview } from "./components/MessagePreview";
 import { SnoozeDialog } from "./components/SnoozeDialog";
 import { Settings } from "./components/Settings";
 import { AboutDialog } from "./components/AboutDialog";
+import { UpdateDialog, UpdateStatus } from "./components/UpdateDialog";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { openLink, getSettings, Settings as SettingsType } from "./lib/tauri";
 
 function App() {
@@ -49,6 +51,7 @@ function App() {
   const [showSnooze, setShowSnooze] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [settingsChecked, setSettingsChecked] = useState(false);
   const [onboardingSettings, setOnboardingSettings] = useState<SettingsType | undefined>(undefined);
@@ -100,6 +103,38 @@ function App() {
     return () => {
       unlistenSettings.then((f) => f());
       unlistenAbout.then((f) => f());
+    };
+  }, []);
+
+  // Listen for update lifecycle events
+  useEffect(() => {
+    const unlisteners = [
+      listen("update-checking", () => {
+        setUpdateStatus({ state: "checking" });
+      }),
+      listen("no-update", () => {
+        getVersion().then((v) => {
+          setUpdateStatus({ state: "up-to-date", version: v });
+        });
+      }),
+      listen<string>("update-available", (event) => {
+        setUpdateStatus((prev) => {
+          // Only show downloading state if user triggered (checking was shown)
+          if (prev?.state === "checking") {
+            return { state: "downloading", version: event.payload };
+          }
+          return prev;
+        });
+      }),
+      listen<string>("update-installed", (event) => {
+        setUpdateStatus({ state: "installed", version: event.payload });
+      }),
+      listen<string>("update-error", (event) => {
+        setUpdateStatus({ state: "error", message: event.payload });
+      }),
+    ];
+    return () => {
+      unlisteners.forEach((p) => p.then((f) => f()));
     };
   }, []);
 
@@ -283,6 +318,13 @@ function App() {
 
       {showAbout && (
         <AboutDialog onClose={() => setShowAbout(false)} />
+      )}
+
+      {updateStatus && (
+        <UpdateDialog
+          status={updateStatus}
+          onClose={() => setUpdateStatus(null)}
+        />
       )}
 
       {showShortcuts && (

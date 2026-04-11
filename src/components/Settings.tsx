@@ -201,12 +201,10 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
     { key: "solarized-light", label: "Sol Light", bg: "#fdf6e3", surface: "#eee8d5", accent: "#268bd2" },
     { key: "solarized-dark", label: "Sol Dark", bg: "#002b36", surface: "#073642", accent: "#268bd2" },
     { key: "nord", label: "Nord", bg: "#2e3440", surface: "#3b4252", accent: "#88c0d0" },
-    { key: "dracula", label: "Dracula", bg: "#282a36", surface: "#343746", accent: "#bd93f9" },
     { key: "catppuccin", label: "Catppuccin", bg: "#1e1e2e", surface: "#2a2a3c", accent: "#cba6f7" },
     { key: "monokai", label: "Monokai", bg: "#272822", surface: "#333428", accent: "#a6e22e" },
     { key: "cyberpunk", label: "Cyberpunk", bg: "#0a0a1a", surface: "#141428", accent: "#ff2d95" },
     { key: "retro", label: "Retro", bg: "#0c0c0c", surface: "#1a1a1a", accent: "#33ff33" },
-    { key: "rose-pine", label: "Rose Pine", bg: "#191724", surface: "#1f1d2e", accent: "#ea9a97" },
     { key: "sunset", label: "Sunset", bg: "#1a1220", surface: "#261a2e", accent: "#ff7849" },
   ] as const;
 
@@ -425,11 +423,14 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
 
           </div>
 
-          {/* Source Filters group */}
+          {/* Watch list group */}
           <div className="settings-group">
             <div className="settings-row-ia">
-              <span className="settings-row-label">Source filters:</span>
+              <span className="settings-row-label">Watch list:</span>
               <div className="settings-row-control">
+                <div className="settings-hint-text" style={{ marginTop: 0, marginBottom: 6 }}>
+                  People, channels, and DMs to monitor for new messages.
+                </div>
                 <div className="filter-chips">
                   <span className="filter-chip filter-chip-auto">
                     to:me
@@ -460,11 +461,14 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
             </div>
           </div>
 
-          {/* Categories & Rules group */}
+          {/* Inboxes group */}
           <div className="settings-group">
             <div className="settings-row-ia">
-              <span className="settings-row-label">Categories:</span>
+              <span className="settings-row-label">Inboxes:</span>
               <div className="settings-row-control">
+                <div className="settings-hint-text" style={{ marginTop: 0, marginBottom: 6 }}>
+                  Split your messages into separate inboxes with rules and AI classification.
+                </div>
                 <div className="category-list">
                   {sortedCategories.map((cat) => {
                     const catRules = rules
@@ -568,7 +572,7 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
                         addCategory();
                       }
                     }}
-                    placeholder="New category name (press Enter)"
+                    placeholder="New inbox name (press Enter)"
                   />
                 </div>
 
