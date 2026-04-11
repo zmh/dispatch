@@ -82,6 +82,31 @@ struct SlackChannelInfo {
 
 // (User search uses serde_json::Value for flexible response parsing)
 
+// -- Users list API types --
+
+#[derive(Debug, Deserialize)]
+struct UsersListResponse {
+    ok: bool,
+    members: Option<Vec<UserMember>>,
+    response_metadata: Option<ResponseMetadata>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserMember {
+    id: String,
+    name: Option<String>,
+    real_name: Option<String>,
+    deleted: Option<bool>,
+    is_bot: Option<bool>,
+    profile: Option<UserProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserProfile {
+    real_name: Option<String>,
+}
+
 // -- Conversations list API types --
 
 #[derive(Debug, Deserialize)]
@@ -844,6 +869,95 @@ where
             }
             total += page_channels.len();
             on_page(&page_channels)?;
+        }
+
+        let next = data
+            .response_metadata
+            .and_then(|m| m.next_cursor)
+            .unwrap_or_default();
+        if next.is_empty() {
+            break;
+        }
+        cursor = next;
+    }
+
+    Ok(total)
+}
+
+/// Fetch Slack users page by page, saving each page via callback.
+/// Filters out bots and deactivated users.
+pub async fn fetch_slack_users_paged<F>(
+    token: &str,
+    cookie: &str,
+    mut on_page: F,
+) -> Result<usize, String>
+where
+    F: FnMut(&[SlackUser]) -> Result<(), String>,
+{
+    let client = reqwest::Client::new();
+    let headers = build_cookie_header(cookie)?;
+
+    let mut total = 0usize;
+    let mut cursor = String::new();
+
+    loop {
+        let mut form_params = vec![
+            ("token", token.to_string()),
+            ("limit", "200".to_string()),
+        ];
+
+        if !cursor.is_empty() {
+            form_params.push(("cursor", cursor.clone()));
+        }
+
+        let response = client
+            .post("https://slack.com/api/users.list")
+            .headers(headers.clone())
+            .form(&form_params)
+            .send()
+            .await
+            .map_err(|e| format!("Slack users.list failed: {}", e))?;
+
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read users.list response: {}", e))?;
+
+        let data: UsersListResponse = serde_json::from_str(&text).map_err(|e| {
+            let preview = if text.len() > 300 { &text[..300] } else { &text };
+            format!("Failed to parse users.list: {} — response: {}", e, preview)
+        })?;
+
+        if !data.ok {
+            return Err(format!(
+                "Slack users.list error: {}",
+                data.error.unwrap_or_else(|| "unknown".to_string())
+            ));
+        }
+
+        if let Some(members) = data.members {
+            let mut page_users = Vec::new();
+            for m in members {
+                if m.deleted.unwrap_or(false) || m.is_bot.unwrap_or(false) {
+                    continue;
+                }
+                let real_name = m.profile
+                    .as_ref()
+                    .and_then(|p| p.real_name.clone())
+                    .or(m.real_name)
+                    .unwrap_or_default();
+                let name = m.name.unwrap_or_default();
+                if name.is_empty() && real_name.is_empty() {
+                    continue;
+                }
+                page_users.push(SlackUser {
+                    id: m.id,
+                    name,
+                    real_name,
+                });
+            }
+            total += page_users.len();
+            on_page(&page_users)?;
         }
 
         let next = data

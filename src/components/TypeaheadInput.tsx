@@ -21,7 +21,6 @@ export function TypeaheadInput({
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const updateDropdownPos = useCallback(() => {
@@ -51,43 +50,42 @@ export function TypeaheadInput({
     if (searchTerm.length === 0) return;
 
     try {
+      let newResults: TypeaheadItem[] = [];
       if (prefix === "@") {
         const users = await searchSlackUsers(searchTerm);
-        setResults(
-          users.map((u) => ({
-            id: u.id,
-            label: u.real_name || u.name,
-            sublabel: `@${u.name || u.real_name}`,
-            type: "user" as const,
-          }))
-        );
+        newResults = users.map((u) => ({
+          id: u.id,
+          label: u.real_name || u.name,
+          sublabel: `@${u.name || u.real_name}`,
+          type: "user" as const,
+        }));
       } else if (prefix === "#") {
         const channels = await searchSlackChannels(searchTerm);
-        setResults(
-          channels.map((c) => ({
-            id: c.id,
-            label: c.name,
-            sublabel: c.is_private ? "private" : "public",
-            type: "channel" as const,
-          }))
-        );
+        newResults = channels.map((c) => ({
+          id: c.id,
+          label: c.name,
+          sublabel: c.is_private ? "private" : "public",
+          type: "channel" as const,
+        }));
       } else {
         setResults([]);
         setShowDropdown(false);
         return;
       }
+      setResults(newResults);
       updateDropdownPos();
-      setShowDropdown(true);
+      setShowDropdown(newResults.length > 0);
       setHighlightIndex(0);
+      return newResults;
     } catch (e) {
       console.error("Search failed:", e);
+      return [];
     }
   }, [updateDropdownPos]);
 
   const handleChange = (value: string) => {
     setQuery(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(value), 150);
+    doSearch(value);
   };
 
   const selectItem = (item: TypeaheadItem) => {
@@ -98,7 +96,7 @@ export function TypeaheadInput({
     inputRef.current?.focus();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = async (e: React.KeyboardEvent) => {
     // Handle to: prefix — submit on Enter without dropdown
     if (e.key === "Enter" && query.startsWith("to:")) {
       e.preventDefault();
@@ -110,6 +108,29 @@ export function TypeaheadInput({
           sublabel: "to filter",
           type: "to",
         });
+      }
+      return;
+    }
+
+    // Enter-to-add: when dropdown is not visible, try to add typed @/# query
+    if (e.key === "Enter" && (!showDropdown || results.length === 0)) {
+      e.preventDefault();
+      const prefix = query[0];
+      const searchTerm = query.slice(1).trim();
+      if ((prefix === "@" || prefix === "#") && searchTerm.length > 0) {
+        // Try an immediate search to find a match
+        const searchResults = await doSearch(query);
+        if (searchResults && searchResults.length > 0) {
+          selectItem(searchResults[0]);
+        } else {
+          // No match found — add as-is using typed name
+          selectItem({
+            id: searchTerm,
+            label: searchTerm,
+            sublabel: prefix === "@" ? `@${searchTerm}` : `#${searchTerm}`,
+            type: prefix === "@" ? "user" : "channel",
+          });
+        }
       }
       return;
     }

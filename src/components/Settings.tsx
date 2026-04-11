@@ -7,6 +7,7 @@ import {
   getSettings,
   saveSettings,
   refreshInbox,
+  populateSlackCache,
 } from "../lib/tauri";
 import { applyTheme } from "../hooks/useMessages";
 import { TypeaheadInput, TypeaheadItem } from "./TypeaheadInput";
@@ -43,6 +44,7 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
   const [loaded, setLoaded] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [ruleInputs, setRuleInputs] = useState<Record<string, string>>({});
+  const [refreshingCache, setRefreshingCache] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const filters = settings.slack_filters ?? [];
@@ -413,9 +415,25 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
             {onRunSetup && (
               <div className="settings-row-ia">
                 <span className="settings-row-label"></span>
-                <div className="settings-row-control">
+                <div className="settings-row-control" style={{ display: "flex", gap: 8 }}>
                   <button className="setup-wizard-btn" onClick={onRunSetup}>
                     Run Setup Wizard...
+                  </button>
+                  <button
+                    className="setup-wizard-btn"
+                    disabled={refreshingCache}
+                    onClick={async () => {
+                      setRefreshingCache(true);
+                      try {
+                        await populateSlackCache();
+                      } catch (e) {
+                        console.error("Cache refresh failed:", e);
+                      } finally {
+                        setRefreshingCache(false);
+                      }
+                    }}
+                  >
+                    {refreshingCache ? "Refreshing..." : "Refresh Workspace Cache"}
                   </button>
                 </div>
               </div>

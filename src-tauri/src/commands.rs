@@ -179,6 +179,47 @@ pub async fn refresh_inbox(app: tauri::AppHandle, state: State<'_, AppState>) ->
         }
     }
 
+    // Refresh slack cache if stale (>24 hours old or missing)
+    if let (Some(ref token), Some(ref cookie)) = (&settings.slack_token, &settings.slack_cookie) {
+        let needs_refresh = match state.db.get_setting("cache_last_populated")? {
+            Some(ts_str) => {
+                let cached_at = ts_str.parse::<u64>().unwrap_or(0);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_secs();
+                now - cached_at > 86400
+            }
+            None => true,
+        };
+        if needs_refresh {
+            let db_ch = state.db.clone();
+            let db_us = state.db.clone();
+            let db_ts = state.db.clone();
+            let token = token.clone();
+            let cookie = cookie.clone();
+            let token2 = token.clone();
+            let cookie2 = cookie.clone();
+            tokio::spawn(async move {
+                let (ch, us) = tokio::join!(
+                    slack::fetch_slack_channels_paged(&token, &cookie, |page| {
+                        db_ch.append_slack_channels(page)
+                    }),
+                    slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
+                        db_us.append_slack_users(page)
+                    })
+                );
+                if ch.is_ok() && us.is_ok() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let _ = db_ts.set_setting("cache_last_populated", &now.to_string());
+                }
+            });
+        }
+    }
+
     // Send notification for new messages
     if result.new_messages > 0 {
         let enabled = settings.notifications_enabled.unwrap_or(true);
@@ -332,13 +373,31 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
         .ok_or("Slack cookie not configured")?
         .to_string();
 
-    // Only load channels into cache (users are searched live via API)
     state.db.clear_slack_cache()?;
 
-    let db = state.db.clone();
-    slack::fetch_slack_channels_paged(&token, &cookie, |page| {
-        db.append_slack_channels(page)
-    }).await?;
+    let db_channels = state.db.clone();
+    let db_users = state.db.clone();
+    let token2 = token.clone();
+    let cookie2 = cookie.clone();
+
+    let (channels_result, users_result) = tokio::join!(
+        slack::fetch_slack_channels_paged(&token, &cookie, |page| {
+            db_channels.append_slack_channels(page)
+        }),
+        slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
+            db_users.append_slack_users(page)
+        })
+    );
+
+    channels_result?;
+    users_result?;
+
+    // Record cache timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    state.db.set_setting("cache_last_populated", &now.to_string())?;
 
     state.db.slack_cache_count()
 }
@@ -348,10 +407,7 @@ pub async fn search_slack_users(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SlackUser>, String> {
-    let settings = state.db.get_settings()?;
-    let token = settings.slack_token.as_deref().ok_or("Slack token not configured")?;
-    let cookie = settings.slack_cookie.as_deref().ok_or("Slack cookie not configured")?;
-    slack::search_users_live(token, cookie, &query).await
+    state.db.search_slack_users(&query)
 }
 
 #[tauri::command]

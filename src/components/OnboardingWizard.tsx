@@ -326,7 +326,7 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
               )}
 
               {!cacheReady && connectionInfo && (
-                <div className="onboarding-loading">Loading your channels...</div>
+                <div className="onboarding-loading">Loading your workspace...</div>
               )}
 
               <div className="onboarding-search-section">
