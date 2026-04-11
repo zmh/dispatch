@@ -3,12 +3,14 @@ import {
   Settings,
   SlackFilter,
   SlackChannel,
+  SlackUser,
   SlackConnectionInfo,
   getSettings,
   saveSettings,
   testSlackConnection,
   populateSlackCache,
   searchSlackChannels,
+  getOnboardingSuggestions,
 } from "../lib/tauri";
 import { TypeaheadInput, TypeaheadItem } from "./TypeaheadInput";
 
@@ -44,19 +46,36 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   const [filters, setFilters] = useState<SlackFilter[]>(initialSettings?.slack_filters || []);
   const [connectionInfo, setConnectionInfo] = useState<SlackConnectionInfo | null>(null);
   const [suggestedChannels, setSuggestedChannels] = useState<SlackChannel[]>([]);
+  const [suggestedPeople, setSuggestedPeople] = useState<SlackUser[]>([]);
   const [cacheReady, setCacheReady] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load suggested channels when cache is ready and we're on step 2
+  // Load suggestions when cache is ready and we're on step 2
   useEffect(() => {
     if (step === 2 && cacheReady) {
-      // Search for common channels — empty-ish query to get popular ones
-      searchSlackChannels("").then((channels) => {
-        setSuggestedChannels(channels.slice(0, 15));
-      }).catch(() => {});
+      getOnboardingSuggestions().then((suggestions) => {
+        setSuggestedPeople(suggestions.suggested_people.slice(0, 10));
+        setSuggestedChannels(suggestions.suggested_channels.slice(0, 15));
+        // Pre-select top 3 of each (only if no filters selected yet)
+        if (filters.length === 0) {
+          const preselected: SlackFilter[] = [];
+          for (const u of suggestions.suggested_people.slice(0, 3)) {
+            preselected.push({ filter_type: "user", id: u.id, display_name: u.real_name || u.name });
+          }
+          for (const ch of suggestions.suggested_channels.slice(0, 3)) {
+            preselected.push({ filter_type: "channel", id: ch.id, display_name: ch.name });
+          }
+          setFilters(preselected);
+        }
+      }).catch(() => {
+        // Fallback to cache search if suggestions API fails
+        searchSlackChannels("").then((channels) => {
+          setSuggestedChannels(channels.slice(0, 15));
+        }).catch(() => {});
+      });
     }
   }, [step, cacheReady]);
 
@@ -159,6 +178,19 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
         filter_type: "channel",
         id: channel.id,
         display_name: channel.name,
+      }]);
+    }
+  };
+
+  const togglePerson = (user: SlackUser) => {
+    const existing = filters.find((f) => f.id === user.id);
+    if (existing) {
+      removeFilter(user.id);
+    } else {
+      setFilters([...filters, {
+        filter_type: "user",
+        id: user.id,
+        display_name: user.real_name || user.name,
       }]);
     }
   };
@@ -305,9 +337,29 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
                 ))}
               </div>
 
+              {suggestedPeople.length > 0 && (
+                <div className="onboarding-suggested">
+                  <div className="onboarding-suggested-label">Suggested people:</div>
+                  <div className="onboarding-channel-grid">
+                    {suggestedPeople.map((user) => {
+                      const isSelected = filters.some((f) => f.id === user.id);
+                      return (
+                        <button
+                          key={user.id}
+                          className={`onboarding-channel-chip ${isSelected ? "selected" : ""}`}
+                          onClick={() => togglePerson(user)}
+                        >
+                          @ {user.real_name || user.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {suggestedChannels.length > 0 && (
                 <div className="onboarding-suggested">
-                  <div className="onboarding-suggested-label">Your channels:</div>
+                  <div className="onboarding-suggested-label">Suggested channels:</div>
                   <div className="onboarding-channel-grid">
                     {suggestedChannels.map((ch) => {
                       const isSelected = filters.some((f) => f.id === ch.id);

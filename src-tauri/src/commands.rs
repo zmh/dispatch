@@ -4,8 +4,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::classifier;
 use crate::models::{
-    Category, CategoryRule, Message, MessageCounts, RefreshResult, Settings, SlackCacheStatus,
-    SlackChannel, SlackConnectionInfo, SlackUser,
+    Category, CategoryRule, Message, MessageCounts, OnboardingSuggestions, RefreshResult, Settings,
+    SlackCacheStatus, SlackChannel, SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -377,20 +377,29 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
 
     let db_channels = state.db.clone();
     let db_users = state.db.clone();
+    let db_dms = state.db.clone();
     let token2 = token.clone();
     let cookie2 = cookie.clone();
+    let token3 = token.clone();
+    let cookie3 = cookie.clone();
 
-    let (channels_result, users_result) = tokio::join!(
+    let (channels_result, users_result, dms_result) = tokio::join!(
         slack::fetch_slack_channels_paged(&token, &cookie, |page| {
             db_channels.append_slack_channels(page)
         }),
         slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
             db_users.append_slack_users(page)
-        })
+        }),
+        slack::fetch_recent_dm_user_ids(&token3, &cookie3, 20)
     );
 
     channels_result?;
     users_result?;
+
+    // Save DM user IDs for onboarding suggestions (best-effort)
+    if let Ok(dm_ids) = dms_result {
+        let _ = db_dms.save_suggested_dm_user_ids(&dm_ids);
+    }
 
     // Record cache timestamp
     let now = std::time::SystemTime::now()
@@ -400,6 +409,19 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
     state.db.set_setting("cache_last_populated", &now.to_string())?;
 
     state.db.slack_cache_count()
+}
+
+#[tauri::command]
+pub async fn get_onboarding_suggestions(
+    state: State<'_, AppState>,
+) -> Result<OnboardingSuggestions, String> {
+    let dm_user_ids = state.db.get_suggested_dm_user_ids()?;
+    let suggested_people = state.db.get_slack_users_by_ids(&dm_user_ids)?;
+    let suggested_channels = state.db.get_suggested_channels(15)?;
+    Ok(OnboardingSuggestions {
+        suggested_people,
+        suggested_channels,
+    })
 }
 
 #[tauri::command]
