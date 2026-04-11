@@ -22,6 +22,7 @@ export function TypeaheadInput({
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchCounterRef = useRef(0);
 
   const updateDropdownPos = useCallback(() => {
     if (inputRef.current) {
@@ -49,10 +50,13 @@ export function TypeaheadInput({
     const searchTerm = q.slice(1);
     if (searchTerm.length === 0) return;
 
+    const thisSearch = ++searchCounterRef.current;
+
     try {
       let newResults: TypeaheadItem[] = [];
       if (prefix === "@") {
         const users = await searchSlackUsers(searchTerm);
+        if (searchCounterRef.current !== thisSearch) return;
         newResults = users.map((u) => ({
           id: u.id,
           label: u.real_name || u.name,
@@ -61,6 +65,7 @@ export function TypeaheadInput({
         }));
       } else if (prefix === "#") {
         const channels = await searchSlackChannels(searchTerm);
+        if (searchCounterRef.current !== thisSearch) return;
         newResults = channels.map((c) => ({
           id: c.id,
           label: c.name,
