@@ -123,6 +123,22 @@ struct ConversationChannel {
     name: String,
     is_archived: Option<bool>,
     is_private: Option<bool>,
+    #[serde(default)]
+    updated: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImConversation {
+    #[allow(dead_code)]
+    id: String,
+    user: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImConversationsListResponse {
+    ok: bool,
+    channels: Option<Vec<ImConversation>>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -705,6 +721,7 @@ pub async fn search_channels_live(
                     id: id.to_string(),
                     name: name.to_string(),
                     is_private,
+                    updated: 0.0,
                 });
             }
         }
@@ -722,6 +739,7 @@ pub async fn search_channels_live(
                     id: id.to_string(),
                     name: name.to_string(),
                     is_private,
+                    updated: 0.0,
                 });
             }
         }
@@ -865,6 +883,7 @@ where
                     id: ch.id,
                     name: ch.name,
                     is_private: ch.is_private.unwrap_or(false),
+                    updated: ch.updated.unwrap_or(0.0),
                 });
             }
             total += page_channels.len();
@@ -971,4 +990,57 @@ where
     }
 
     Ok(total)
+}
+
+/// Fetch recent DM conversation partner user IDs (no pagination, single page).
+/// Returns user IDs ordered by most recent activity.
+pub async fn fetch_recent_dm_user_ids(
+    token: &str,
+    cookie: &str,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    let client = reqwest::Client::new();
+    let headers = build_cookie_header(cookie)?;
+
+    let form_params = vec![
+        ("token", token.to_string()),
+        ("limit", limit.to_string()),
+        ("types", "im".to_string()),
+        ("exclude_archived", "true".to_string()),
+    ];
+
+    let response = client
+        .post("https://slack.com/api/conversations.list")
+        .headers(headers)
+        .form(&form_params)
+        .send()
+        .await
+        .map_err(|e| format!("Slack conversations.list (im) failed: {}", e))?;
+
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read conversations.list (im) response: {}", e))?;
+
+    let data: ImConversationsListResponse = serde_json::from_str(&text).map_err(|e| {
+        let preview = if text.len() > 300 { &text[..300] } else { &text };
+        format!("Failed to parse conversations.list (im): {} — response: {}", e, preview)
+    })?;
+
+    if !data.ok {
+        return Err(format!(
+            "Slack conversations.list (im) error: {}",
+            data.error.unwrap_or_else(|| "unknown".to_string())
+        ));
+    }
+
+    let user_ids: Vec<String> = data
+        .channels
+        .unwrap_or_default()
+        .into_iter()
+        .map(|im| im.user)
+        .filter(|uid| uid != "USLACKBOT")
+        .collect();
+
+    Ok(user_ids)
 }
