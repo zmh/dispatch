@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Settings as SettingsType,
   SlackFilter,
@@ -32,7 +32,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 
 const SETTINGS_TABS: SettingsTab[] = ["general", "accounts", "watchlist", "inboxes"];
 
-const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
+const TAB_ICONS: Record<SettingsTab, React.ReactElement> = {
   general: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="3" />
