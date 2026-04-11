@@ -804,7 +804,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0;
-  width: 600px;
+  width: 660px;
   max-height: calc(100vh - 96px);
   box-shadow: 0 12px 40px var(--dialog-shadow), 0 0 1px rgba(0, 0, 0, 0.1);
   color: var(--text);
@@ -1006,6 +1006,38 @@ body {
 
 .settings-textarea::placeholder {
   color: var(--text-dim);
+}
+
+/* Full-width section layout (for complex sections like Watch list, Inboxes) */
+.settings-section {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.settings-section-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 /* Shortcuts dialog */
@@ -1361,7 +1393,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 12px 14px;
 }
 
 .category-header {
@@ -1500,9 +1532,10 @@ body {
 
 /* ── Appearance picker ── */
 .theme-picker {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
+  justify-items: center;
 }
 
 .theme-swatch {
@@ -1672,16 +1705,42 @@ body {
   justify-content: center;
 }
 
-/* Update dialog */
-.update-dialog {
-  min-width: 320px;
-  max-width: 400px;
+/* Update dialog — native style with settings chrome */
+.update-dialog-native {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0;
+  width: 380px;
+  box-shadow: 0 12px 40px var(--dialog-shadow), 0 0 1px rgba(0, 0, 0, 0.1);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  display: flex;
+  flex-direction: column;
 }
 
-.update-body {
+.update-body-native {
+  padding: 24px;
   font-size: 13px;
   color: var(--text);
   line-height: 1.5;
+  text-align: center;
+}
+
+.update-body-native p {
+  margin: 0;
+}
+
+.update-body-native p + p {
+  margin-top: 8px;
+}
+
+.update-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
 }
 
 .update-error-detail {
