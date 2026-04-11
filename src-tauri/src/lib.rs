@@ -181,23 +181,26 @@ pub fn run() {
                 }
             });
 
-            // Background update checker: wait 5s after startup, then check for updates
+            // Background update checker: check 5s after startup, then every 24 hours
             let update_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let updater = match update_handle.updater() {
-                    Ok(u) => u,
-                    Err(e) => { eprintln!("Updater init failed: {}", e); return; }
-                };
-                match updater.check().await {
-                    Ok(Some(update)) => {
-                        let version = update.version.clone();
-                        let _ = update_handle.emit("update-available", version.clone());
-                        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
-                            let _ = update_handle.emit("update-installed", version);
+                loop {
+                    let updater = match update_handle.updater() {
+                        Ok(u) => u,
+                        Err(e) => { eprintln!("Updater init failed: {}", e); break; }
+                    };
+                    match updater.check().await {
+                        Ok(Some(update)) => {
+                            let version = update.version.clone();
+                            let _ = update_handle.emit("update-available", version.clone());
+                            if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+                                let _ = update_handle.emit("update-installed", version);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
+                    tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
                 }
             });
 
