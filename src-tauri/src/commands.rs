@@ -476,6 +476,15 @@ pub async fn search_slack_channels(
                     merged.push(ch);
                 }
             }
+            // Re-sort merged results by name relevance to the query
+            let query_lower = query.to_lowercase();
+            merged.sort_by_key(|ch| {
+                let name_lower = ch.name.to_lowercase();
+                if name_lower == query_lower { 0 }
+                else if name_lower.starts_with(&query_lower) { 1 }
+                else if name_lower.contains(&query_lower) { 2 }
+                else { 3 }
+            });
             Ok(merged)
         }
         Err(_) => Ok(cached), // Fall back to cache on error
