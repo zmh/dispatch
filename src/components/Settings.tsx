@@ -21,6 +21,43 @@ const DEFAULT_CATEGORIES: Category[] = [
   { name: "other", builtin: true, position: 1 },
 ];
 
+type SettingsTab = "general" | "accounts" | "watchlist" | "inboxes";
+
+const TAB_LABELS: Record<SettingsTab, string> = {
+  general: "General",
+  accounts: "Accounts",
+  watchlist: "Watch List",
+  inboxes: "Inboxes",
+};
+
+const SETTINGS_TABS: SettingsTab[] = ["general", "accounts", "watchlist", "inboxes"];
+
+const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
+  general: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+    </svg>
+  ),
+  accounts: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </svg>
+  ),
+  watchlist: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  inboxes: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+      <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+    </svg>
+  ),
+};
+
 interface SettingsProps {
   onClose: () => void;
   onCategoriesChanged?: () => void;
@@ -42,6 +79,7 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
     open_in_slack_app: null,
     notifications_enabled: null,
   });
+  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [loaded, setLoaded] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [ruleInputs, setRuleInputs] = useState<Record<string, string>>({});
@@ -252,11 +290,25 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
       >
         <div className="settings-titlebar" data-tauri-drag-region>
           <button className="settings-close" onClick={onClose} title="Close" />
-          <span className="settings-titlebar-text">General</span>
+          <span className="settings-titlebar-text">{TAB_LABELS[activeTab]}</span>
+        </div>
+
+        <div className="settings-tabbar">
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab}
+              className={`settings-tab ${activeTab === tab ? "active" : ""}`}
+              onClick={() => setActiveTab(tab)}
+            >
+              <span className="settings-tab-icon">{TAB_ICONS[tab]}</span>
+              <span className="settings-tab-label">{TAB_LABELS[tab]}</span>
+            </button>
+          ))}
         </div>
 
         <div className="settings-form settings-scrollable">
-          {/* Appearance group */}
+          {/* General tab — Appearance */}
+          {activeTab === "general" && (
           <div className="settings-group">
             <div className="settings-row-ia">
               <span className="settings-row-label">Theme:</span>
@@ -348,8 +400,10 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
               </div>
             </div>
           </div>
+          )}
 
-          {/* Credentials group */}
+          {/* Accounts tab — Credentials */}
+          {activeTab === "accounts" && (
           <div className="settings-group">
             <div className="settings-row-ia">
               <span className="settings-row-label">Slack token:</span>
@@ -444,10 +498,11 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
             )}
 
           </div>
+          )}
 
-          {/* Watch list section — full-width */}
+          {/* Watch List tab */}
+          {activeTab === "watchlist" && (
           <div className="settings-section">
-            <div className="settings-section-title">Watch list</div>
             <div className="settings-section-desc">
               People, channels, and DMs to monitor for new messages.
             </div>
@@ -480,10 +535,11 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
               </div>
             </div>
           </div>
+          )}
 
-          {/* Inboxes section — full-width */}
+          {/* Inboxes tab */}
+          {activeTab === "inboxes" && (
           <div className="settings-section">
-            <div className="settings-section-title">Inboxes</div>
             <div className="settings-section-desc">
               Split your messages into separate inboxes with rules and AI classification.
             </div>
@@ -600,6 +656,7 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
               </div>
             </div>
           </div>
+          )}
         </div>
 
       </div>
