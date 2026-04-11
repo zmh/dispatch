@@ -24,9 +24,12 @@ export function UpdateDialog({ status, onClose }: UpdateDialogProps) {
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog update-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-title">Software Update</div>
-        <div className="update-body">
+      <div className="update-dialog-native" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-titlebar">
+          <button className="settings-close" onClick={onClose} title="Close" />
+          <span className="settings-titlebar-text">Software Update</span>
+        </div>
+        <div className="update-body-native">
           {status.state === "checking" && (
             <p>Checking for updates...</p>
           )}
@@ -37,9 +40,7 @@ export function UpdateDialog({ status, onClose }: UpdateDialogProps) {
             <p>Downloading update v{status.version}...</p>
           )}
           {status.state === "installed" && (
-            <>
-              <p>Update v{status.version} installed. Restart Dispatch to apply.</p>
-            </>
+            <p>Update v{status.version} installed. Restart Dispatch to apply.</p>
           )}
           {status.state === "error" && (
             <>
@@ -48,18 +49,12 @@ export function UpdateDialog({ status, onClose }: UpdateDialogProps) {
             </>
           )}
         </div>
-        <div className="dialog-footer">
-          {status.state === "installed" ? (
-            <>
-              <button className="dialog-cancel" onClick={onClose}>Later</button>
-              <button className="dialog-save" onClick={() => relaunch()}>Restart</button>
-            </>
-          ) : (
-            <button className="dialog-cancel" onClick={onClose}>
-              {status.state === "checking" || status.state === "downloading" ? "Dismiss" : "Close"}
-            </button>
-          )}
-        </div>
+        {status.state === "installed" && (
+          <div className="update-footer">
+            <button className="dialog-cancel" onClick={onClose}>Later</button>
+            <button className="dialog-save" onClick={() => relaunch()}>Restart</button>
+          </div>
+        )}
       </div>
     </div>
   );

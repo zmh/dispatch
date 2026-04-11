@@ -441,162 +441,158 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
 
           </div>
 
-          {/* Watch list group */}
-          <div className="settings-group">
-            <div className="settings-row-ia">
-              <span className="settings-row-label">Watch list:</span>
-              <div className="settings-row-control">
-                <div className="settings-hint-text" style={{ marginTop: 0, marginBottom: 6 }}>
-                  People, channels, and DMs to monitor for new messages.
-                </div>
-                <div className="filter-chips">
-                  <span className="filter-chip filter-chip-auto">
-                    to:me
+          {/* Watch list section — full-width */}
+          <div className="settings-section">
+            <div className="settings-section-title">Watch list</div>
+            <div className="settings-section-desc">
+              People, channels, and DMs to monitor for new messages.
+            </div>
+            <div className="settings-section-body">
+              <div className="filter-chips">
+                <span className="filter-chip filter-chip-auto">
+                  to:me
+                </span>
+                {filters.map((f) => (
+                  <span key={f.id} className="filter-chip">
+                    {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
+                    {f.display_name.replace(/^#/, "")}
+                    <button
+                      className="chip-remove"
+                      onClick={() => removeFilter(f.id)}
+                    >
+                      ×
+                    </button>
                   </span>
-                  {filters.map((f) => (
-                    <span key={f.id} className="filter-chip">
-                      {f.filter_type === "user" ? "@" : f.filter_type === "to" ? "to:" : "#"}
-                      {f.display_name.replace(/^#/, "")}
-                      <button
-                        className="chip-remove"
-                        onClick={() => removeFilter(f.id)}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
+                ))}
+              </div>
 
-                <TypeaheadInput
-                  placeholder="@person, #channel, or to:someone..."
-                  onSelect={addFilter}
-                />
+              <TypeaheadInput
+                placeholder="@person, #channel, or to:someone..."
+                onSelect={addFilter}
+              />
 
-                <div className="settings-hint-text">
-                  Type <kbd>@</kbd> for people, <kbd>#</kbd> for channels, or <kbd>to:</kbd> for directed messages. <code>to:me</code> is included automatically.
-                </div>
+              <div className="settings-hint-text">
+                Type <kbd>@</kbd> for people, <kbd>#</kbd> for channels, or <kbd>to:</kbd> for directed messages. <code>to:me</code> is included automatically.
               </div>
             </div>
           </div>
 
-          {/* Inboxes group */}
-          <div className="settings-group">
-            <div className="settings-row-ia">
-              <span className="settings-row-label">Inboxes:</span>
-              <div className="settings-row-control">
-                <div className="settings-hint-text" style={{ marginTop: 0, marginBottom: 6 }}>
-                  Split your messages into separate inboxes with rules and AI classification.
-                </div>
-                <div className="category-list">
-                  {sortedCategories.map((cat) => {
-                    const catRules = rules
-                      .map((r, i) => ({ ...r, _idx: i }))
-                      .filter((r) => r.category === cat.name);
-                    const isOther = cat.name === "other";
+          {/* Inboxes section — full-width */}
+          <div className="settings-section">
+            <div className="settings-section-title">Inboxes</div>
+            <div className="settings-section-desc">
+              Split your messages into separate inboxes with rules and AI classification.
+            </div>
+            <div className="settings-section-body">
+              <div className="category-list">
+                {sortedCategories.map((cat) => {
+                  const catRules = rules
+                    .map((r, i) => ({ ...r, _idx: i }))
+                    .filter((r) => r.category === cat.name);
+                  const isOther = cat.name === "other";
 
-                    return (
-                      <div key={cat.name} className="category-item">
-                        <div className="category-header">
-                          <span className="category-name">
-                            {cat.name.charAt(0).toUpperCase() + cat.name.slice(1)}
-                            {cat.builtin && (
-                              <span className="category-builtin"> (built-in)</span>
-                            )}
-                          </span>
-                          {!cat.builtin && (
-                            <button
-                              className="category-delete"
-                              onClick={() => removeCategory(cat.name)}
-                            >
-                              ×
-                            </button>
+                  return (
+                    <div key={cat.name} className="category-item">
+                      <div className="category-header">
+                        <span className="category-name">
+                          {cat.name.charAt(0).toUpperCase() + cat.name.slice(1)}
+                          {cat.builtin && (
+                            <span className="category-builtin"> (built-in)</span>
                           )}
-                        </div>
-
-                        {isOther ? (
-                          <div className="category-catchall">Catch-all for unmatched messages</div>
-                        ) : (
-                          <>
-                            <textarea
-                              className="category-description"
-                              value={cat.description || ""}
-                              onChange={(e) => updateCategoryDescription(cat.name, e.target.value)}
-                              rows={2}
-                              placeholder="Describe what messages belong here (used by AI classifier)..."
-                            />
-                            {!settings.claude_api_key && (
-                              <div className="category-ai-hint">Add a Claude API key to enable AI classification</div>
-                            )}
-
-                            {catRules.length > 0 && (
-                              <div className="rule-list">
-                                {catRules.map((rule) => (
-                                  <div key={rule._idx} className="rule-item">
-                                    <span className="rule-type">{rule.rule_type}</span>
-                                    <span className="rule-value">{rule.value}</span>
-                                    <button
-                                      className="rule-remove"
-                                      onClick={() => removeRule(rule._idx)}
-                                    >
-                                      ×
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            <div className="rule-add">
-                              <TypeaheadInput
-                                placeholder="@sender, #channel, or keyword..."
-                                onSelect={(item) => addRuleFromTypeahead(cat.name, item)}
-                              />
-                              <div className="rule-keyword-add">
-                                <input
-                                  type="text"
-                                  className="settings-input rule-keyword-input"
-                                  value={ruleInputs[cat.name] || ""}
-                                  onChange={(e) =>
-                                    setRuleInputs({
-                                      ...ruleInputs,
-                                      [cat.name]: e.target.value,
-                                    })
-                                  }
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      addRule(cat.name);
-                                    }
-                                  }}
-                                  placeholder="keyword (press Enter)"
-                                />
-                              </div>
-                            </div>
-                          </>
+                        </span>
+                        {!cat.builtin && (
+                          <button
+                            className="category-delete"
+                            onClick={() => removeCategory(cat.name)}
+                          >
+                            ×
+                          </button>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
 
-                <div className="category-add">
-                  <input
-                    type="text"
-                    className="settings-input"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        addCategory();
-                      }
-                    }}
-                    placeholder="New inbox name (press Enter)"
-                  />
-                </div>
+                      {isOther ? (
+                        <div className="category-catchall">Catch-all for unmatched messages</div>
+                      ) : (
+                        <>
+                          <textarea
+                            className="category-description"
+                            value={cat.description || ""}
+                            onChange={(e) => updateCategoryDescription(cat.name, e.target.value)}
+                            rows={2}
+                            placeholder="Describe what messages belong here (used by AI classifier)..."
+                          />
+                          {!settings.claude_api_key && (
+                            <div className="category-ai-hint">Add a Claude API key to enable AI classification</div>
+                          )}
 
-                <div className="settings-hint-text">
-                  Rules auto-sort messages by keyword, sender, or channel. AI uses descriptions for everything else.
-                </div>
+                          {catRules.length > 0 && (
+                            <div className="rule-list">
+                              {catRules.map((rule) => (
+                                <div key={rule._idx} className="rule-item">
+                                  <span className="rule-type">{rule.rule_type}</span>
+                                  <span className="rule-value">{rule.value}</span>
+                                  <button
+                                    className="rule-remove"
+                                    onClick={() => removeRule(rule._idx)}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="rule-add">
+                            <TypeaheadInput
+                              placeholder="@sender, #channel, or keyword..."
+                              onSelect={(item) => addRuleFromTypeahead(cat.name, item)}
+                            />
+                            <div className="rule-keyword-add">
+                              <input
+                                type="text"
+                                className="settings-input rule-keyword-input"
+                                value={ruleInputs[cat.name] || ""}
+                                onChange={(e) =>
+                                  setRuleInputs({
+                                    ...ruleInputs,
+                                    [cat.name]: e.target.value,
+                                  })
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    addRule(cat.name);
+                                  }
+                                }}
+                                placeholder="keyword (press Enter)"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="category-add">
+                <input
+                  type="text"
+                  className="settings-input"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCategory();
+                    }
+                  }}
+                  placeholder="New inbox name (press Enter)"
+                />
+              </div>
+
+              <div className="settings-hint-text">
+                Rules auto-sort messages by keyword, sender, or channel. AI uses descriptions for everything else.
               </div>
             </div>
           </div>
