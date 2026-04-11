@@ -126,6 +126,12 @@ impl Settings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveSettingsResult {
+    pub classifications_reset: bool,
+    pub filters_cleaned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefreshResult {
     pub new_messages: usize,
     pub classified: usize,

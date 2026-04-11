@@ -24,10 +24,11 @@ const DEFAULT_CATEGORIES: Category[] = [
 interface SettingsProps {
   onClose: () => void;
   onCategoriesChanged?: () => void;
+  onMessagesChanged?: () => void;
   onRunSetup?: () => void;
 }
 
-export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsProps) {
+export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRunSetup }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType>({
     slack_token: null,
     slack_cookie: null,
@@ -72,9 +73,12 @@ export function Settings({ onClose, onCategoriesChanged, onRunSetup }: SettingsP
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        const classificationsReset = await saveSettings(settings);
+        const result = await saveSettings(settings);
         onCategoriesChanged?.();
-        if (classificationsReset) {
+        if (result.filters_cleaned) {
+          onMessagesChanged?.();
+        }
+        if (result.classifications_reset) {
           // Descriptions changed — auto-refresh to reclassify
           refreshInbox().catch(console.error);
         }

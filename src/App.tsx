@@ -44,6 +44,7 @@ function App() {
     doStar,
     doStarMany,
     doOpenLink,
+    fetchMessages,
     loadCategories,
   } = useMessages();
 
@@ -312,6 +313,7 @@ function App() {
         <Settings
           onClose={() => setShowSettings(false)}
           onCategoriesChanged={loadCategories}
+          onMessagesChanged={fetchMessages}
           onRunSetup={handleRunSetup}
         />
       )}

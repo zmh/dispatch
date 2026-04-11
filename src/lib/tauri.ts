@@ -118,7 +118,12 @@ export async function getSettings(): Promise<Settings> {
   return invoke("get_settings");
 }
 
-export async function saveSettings(settings: Settings): Promise<boolean> {
+export interface SaveSettingsResult {
+  classifications_reset: boolean;
+  filters_cleaned: boolean;
+}
+
+export async function saveSettings(settings: Settings): Promise<SaveSettingsResult> {
   return invoke("save_settings", { settings });
 }
 

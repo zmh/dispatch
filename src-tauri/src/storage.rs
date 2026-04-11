@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::models::{Category, CategoryRule, Message, MessageCounts, Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION};
+use crate::models::{Category, CategoryRule, Message, MessageCounts, SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION};
 
 pub struct Database {
     conn: Mutex<Connection>,
@@ -463,9 +463,10 @@ impl Database {
         })
     }
 
-    /// Save settings. Returns `true` if classifications were reset (descriptions changed).
-    pub fn save_settings(&self, settings: &Settings) -> Result<bool, String> {
+    /// Save settings. Returns result indicating if classifications were reset or filters were cleaned.
+    pub fn save_settings(&self, settings: &Settings) -> Result<SaveSettingsResult, String> {
         let mut classifications_reset = false;
+        let mut filters_cleaned = false;
 
         if let Some(ref val) = settings.slack_token {
             self.set_setting("slack_token", val)?;
@@ -477,9 +478,25 @@ impl Database {
             self.set_setting("claude_api_key", val)?;
         }
 
-        // Save slack filters as JSON
+        // Save slack filters as JSON — archive messages from removed filters
         if let Some(ref filters) = settings.slack_filters {
             let json = serde_json::to_string(filters).map_err(|e| e.to_string())?;
+
+            // Detect removed filters and archive their messages
+            let old_filters_json = self.get_setting("slack_filters")?;
+            if let Some(ref old_json) = old_filters_json {
+                if let Ok(old_filters) = serde_json::from_str::<Vec<SlackFilter>>(old_json) {
+                    let new_ids: Vec<&str> = filters.iter().map(|f| f.id.as_str()).collect();
+                    for old_filter in &old_filters {
+                        if !new_ids.contains(&old_filter.id.as_str()) {
+                            if self.archive_messages_for_removed_filter(old_filter)? > 0 {
+                                filters_cleaned = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             self.set_setting("slack_filters", &json)?;
         }
 
@@ -555,7 +572,10 @@ impl Database {
             self.set_setting("notifications_enabled", if val { "true" } else { "false" })?;
         }
 
-        Ok(classifications_reset)
+        Ok(SaveSettingsResult {
+            classifications_reset,
+            filters_cleaned,
+        })
     }
 
     pub fn unsnooze_due_messages(&self) -> Result<usize, String> {
@@ -568,6 +588,35 @@ impl Database {
             "UPDATE messages SET status = 'inbox', snoozed_until = NULL WHERE status = 'snoozed' AND snoozed_until IS NOT NULL AND snoozed_until <= ?1",
             params![now],
         ).map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
+    pub fn archive_messages_for_removed_filter(&self, filter: &SlackFilter) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let count = match filter.filter_type.as_str() {
+            "channel" => {
+                let name_without_hash = filter.display_name.trim_start_matches('#');
+                let name_with_hash = format!("#{}", name_without_hash);
+                conn.execute(
+                    "UPDATE messages SET status = 'archived' WHERE status = 'inbox' AND (subject = ?1 OR subject = ?2)",
+                    params![name_with_hash, name_without_hash],
+                ).map_err(|e| e.to_string())?
+            }
+            "user" => {
+                // Look up the Slack username from cache — sender stores username, not display_name
+                let username: Option<String> = conn.query_row(
+                    "SELECT name FROM slack_users_cache WHERE id = ?1",
+                    params![filter.id],
+                    |row| row.get(0),
+                ).ok();
+                let sender_name = username.as_deref().unwrap_or(&filter.display_name);
+                conn.execute(
+                    "UPDATE messages SET status = 'archived' WHERE status = 'inbox' AND sender = ?1",
+                    params![sender_name],
+                ).map_err(|e| e.to_string())?
+            }
+            _ => 0,
+        };
         Ok(count)
     }
 

@@ -4,8 +4,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::classifier;
 use crate::models::{
-    Category, CategoryRule, Message, MessageCounts, RefreshResult, Settings, SlackCacheStatus,
-    SlackChannel, SlackConnectionInfo, SlackUser,
+    Category, CategoryRule, Message, MessageCounts, RefreshResult, SaveSettingsResult, Settings,
+    SlackCacheStatus, SlackChannel, SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -347,7 +347,7 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
-) -> Result<bool, String> {
+) -> Result<SaveSettingsResult, String> {
     state.db.save_settings(&settings)
 }
 
