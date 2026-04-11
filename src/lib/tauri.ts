@@ -143,6 +143,15 @@ export async function getSlackCacheStatus(): Promise<SlackCacheStatus> {
   return invoke("get_slack_cache_status");
 }
 
+export interface OnboardingSuggestions {
+  suggested_people: SlackUser[];
+  suggested_channels: SlackChannel[];
+}
+
+export async function getOnboardingSuggestions(): Promise<OnboardingSuggestions> {
+  return invoke("get_onboarding_suggestions");
+}
+
 export async function setWindowTheme(theme: string): Promise<void> {
   return invoke("set_window_theme", { theme });
 }

@@ -4,8 +4,8 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::classifier;
 use crate::models::{
-    Category, CategoryRule, Message, MessageCounts, RefreshResult, SaveSettingsResult, Settings,
-    SlackCacheStatus, SlackChannel, SlackConnectionInfo, SlackUser,
+    Category, CategoryRule, Message, MessageCounts, OnboardingSuggestions, RefreshResult,
+    SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel, SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -209,6 +209,12 @@ pub async fn refresh_inbox(app: tauri::AppHandle, state: State<'_, AppState>) ->
                         db_us.append_slack_users(page)
                     })
                 );
+                if let Err(ref e) = ch {
+                    eprintln!("[haystack] Slack channel cache refresh failed: {}", e);
+                }
+                if let Err(ref e) = us {
+                    eprintln!("[haystack] Slack user cache refresh failed: {}", e);
+                }
                 if ch.is_ok() && us.is_ok() {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -377,20 +383,29 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
 
     let db_channels = state.db.clone();
     let db_users = state.db.clone();
+    let db_dms = state.db.clone();
     let token2 = token.clone();
     let cookie2 = cookie.clone();
+    let token3 = token.clone();
+    let cookie3 = cookie.clone();
 
-    let (channels_result, users_result) = tokio::join!(
+    let (channels_result, users_result, dms_result) = tokio::join!(
         slack::fetch_slack_channels_paged(&token, &cookie, |page| {
             db_channels.append_slack_channels(page)
         }),
         slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
             db_users.append_slack_users(page)
-        })
+        }),
+        slack::fetch_recent_dm_user_ids(&token3, &cookie3, 20)
     );
 
     channels_result?;
     users_result?;
+
+    // Save DM user IDs for onboarding suggestions (best-effort)
+    if let Ok(dm_ids) = dms_result {
+        let _ = db_dms.save_suggested_dm_user_ids(&dm_ids);
+    }
 
     // Record cache timestamp
     let now = std::time::SystemTime::now()
@@ -400,6 +415,19 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
     state.db.set_setting("cache_last_populated", &now.to_string())?;
 
     state.db.slack_cache_count()
+}
+
+#[tauri::command]
+pub async fn get_onboarding_suggestions(
+    state: State<'_, AppState>,
+) -> Result<OnboardingSuggestions, String> {
+    let dm_user_ids = state.db.get_suggested_dm_user_ids()?;
+    let suggested_people = state.db.get_slack_users_by_ids(&dm_user_ids)?;
+    let suggested_channels = state.db.get_suggested_channels(15)?;
+    Ok(OnboardingSuggestions {
+        suggested_people,
+        suggested_channels,
+    })
 }
 
 #[tauri::command]
@@ -415,7 +443,43 @@ pub async fn search_slack_channels(
     state: State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SlackChannel>, String> {
-    state.db.search_slack_channels(&query)
+    // First try cache for instant results
+    let cached = state.db.search_slack_channels(&query)?;
+
+    // Also try live Slack search which finds ALL channels (not just member channels)
+    let settings = state.db.get_settings()?;
+    let token = settings
+        .slack_token
+        .as_deref()
+        .unwrap_or_default();
+    let cookie = settings
+        .slack_cookie
+        .as_deref()
+        .unwrap_or_default();
+
+    if token.is_empty() || cookie.is_empty() {
+        return Ok(cached);
+    }
+
+    match slack::search_channels_live(token, cookie, &query).await {
+        Ok(live) => {
+            // Merge: live results first (deduped), then any cached results not in live
+            let mut seen = std::collections::HashSet::new();
+            let mut merged = Vec::new();
+            for ch in live {
+                if seen.insert(ch.id.clone()) {
+                    merged.push(ch);
+                }
+            }
+            for ch in cached {
+                if seen.insert(ch.id.clone()) {
+                    merged.push(ch);
+                }
+            }
+            Ok(merged)
+        }
+        Err(_) => Ok(cached), // Fall back to cache on error
+    }
 }
 
 #[tauri::command]

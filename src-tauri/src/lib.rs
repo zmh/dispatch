@@ -219,6 +219,7 @@ pub fn run() {
             commands::search_slack_users,
             commands::search_slack_channels,
             commands::get_slack_cache_status,
+            commands::get_onboarding_suggestions,
             commands::set_window_theme,
             commands::test_slack_connection,
         ])

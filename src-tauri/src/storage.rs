@@ -70,6 +70,15 @@ impl Database {
                 .map_err(|e| e.to_string())?;
         }
 
+        // Migration: add updated column to slack_channels_cache if missing
+        let has_updated: bool = conn
+            .prepare("SELECT updated FROM slack_channels_cache LIMIT 0")
+            .is_ok();
+        if !has_updated {
+            conn.execute_batch("ALTER TABLE slack_channels_cache ADD COLUMN updated REAL DEFAULT 0;")
+                .map_err(|e| e.to_string())?;
+        }
+
         Ok(())
     }
 
@@ -666,10 +675,10 @@ impl Database {
     pub fn append_slack_channels(&self, channels: &[SlackChannel]) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("INSERT OR REPLACE INTO slack_channels_cache (id, name, is_private) VALUES (?1, ?2, ?3)")
+            .prepare("INSERT OR REPLACE INTO slack_channels_cache (id, name, is_private, updated) VALUES (?1, ?2, ?3, ?4)")
             .map_err(|e| e.to_string())?;
         for ch in channels {
-            stmt.execute(params![ch.id, ch.name, ch.is_private as i32])
+            stmt.execute(params![ch.id, ch.name, ch.is_private as i32, ch.updated])
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
@@ -730,6 +739,7 @@ impl Database {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     is_private: row.get::<_, i32>(2)? != 0,
+                    updated: 0.0,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -737,6 +747,73 @@ impl Database {
             .map_err(|e| e.to_string())?;
 
         Ok(channels)
+    }
+
+    pub fn get_slack_users_by_ids(&self, ids: &[String]) -> Result<Vec<SlackUser>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            "SELECT id, name, real_name FROM slack_users_cache WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(SlackUser {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    real_name: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        // Preserve input ordering (DM recency)
+        let map: HashMap<String, SlackUser> = rows.into_iter().map(|u| (u.id.clone(), u)).collect();
+        Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
+    }
+
+    pub fn get_suggested_channels(&self, limit: usize) -> Result<Vec<SlackChannel>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, is_private, updated FROM slack_channels_cache
+                 ORDER BY updated DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let channels = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(SlackChannel {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    is_private: row.get::<_, i32>(2)? != 0,
+                    updated: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(channels)
+    }
+
+    pub fn save_suggested_dm_user_ids(&self, ids: &[String]) -> Result<(), String> {
+        let json = serde_json::to_string(ids).map_err(|e| e.to_string())?;
+        self.set_setting("suggested_dm_user_ids", &json)
+    }
+
+    pub fn get_suggested_dm_user_ids(&self) -> Result<Vec<String>, String> {
+        match self.get_setting("suggested_dm_user_ids")? {
+            Some(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+            None => Ok(Vec::new()),
+        }
     }
 
     pub fn slack_cache_count(&self) -> Result<SlackCacheStatus, String> {

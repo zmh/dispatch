@@ -33,6 +33,8 @@ pub struct SlackChannel {
     pub id: String,
     pub name: String,
     pub is_private: bool,
+    #[serde(default)]
+    pub updated: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +149,12 @@ pub struct MessageCounts {
 pub struct SlackCacheStatus {
     pub user_count: usize,
     pub channel_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnboardingSuggestions {
+    pub suggested_people: Vec<SlackUser>,
+    pub suggested_channels: Vec<SlackChannel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
