@@ -6,8 +6,9 @@
 
 **Never miss a Slack message.**
 
-A focused inbox for Slack that cuts through the noise.<br>
-Keyboard-driven speed. AI-powered triage. Built for macOS.
+A focused Slack inbox that cuts through the noise.<br>
+(aka I wanted Superhuman for Slack, so I built it.)<br>
+Keyboard-first speed. AI-powered triage. Built for macOS.
 
 <br>
 
@@ -35,23 +36,23 @@ Keyboard-driven speed. AI-powered triage. Built for macOS.
 
 ### Filter the Firehose
 
-Choose what messages are monitored with keyword, sender, and channel-based rules. Ignore noisy social channels and focus on the people, channels, and keywords you need to see.
+Decide what gets your attention with keyword, sender, and channel rules. Ignore noisy social chatter and focus on the people, channels, and topics that matter.
 
 ### Get Organized
 
-Create custom split inboxes with keyword, sender, and channel-based rules. Just like email, so you see messages based on how important they are, not just the channel they're in.
+Create split inboxes with keyword, sender, and channel rules. Sort messages by importance, not just by where they were posted.
 
 ### Intelligent Classification
 
-If you want, Dispatch can use Claude to further classify important messages. That way you'll see everything important, even if it doesn't mention you directly.
+Dispatch can optionally use Claude to classify important messages, so high-signal updates still surface even when you are not directly mentioned.
 
 ### Snooze, Star, Done
 
-Process messages in seconds. Star what needs follow-up, snooze what can wait, archive what's handled. Clear your inbox and move on with your day.
+Process messages in seconds. Star what needs follow-up, snooze what can wait, and archive what is handled.
 
 ### Keyboard-First
 
-Fly through your inbox without touching the mouse. Full keyboard navigation to mark items as done, snooze them for later, or star them to take action.
+Fly through your inbox without touching the mouse. Full keyboard navigation lets you mark items done, snooze for later, or star for follow-up.
 
 
 ---
