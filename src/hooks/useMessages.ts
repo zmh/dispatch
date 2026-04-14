@@ -69,6 +69,8 @@ export function useMessages() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const afterArchiveRef = useRef<string>("newer");
+  const pendingCursorTarget = useRef<string | null>(null);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -79,6 +81,7 @@ export function useMessages() {
       setCategories(withStarred.sort((a, b) => a.position - b.position));
       // Apply theme/font on load
       applyTheme(settings.theme || "dark", settings.font || "system", settings.font_size || "s");
+      afterArchiveRef.current = settings.after_archive ?? "newer";
     } catch (e) {
       console.error("Failed to load categories:", e);
     }
@@ -114,8 +117,17 @@ export function useMessages() {
 
       setMessages(msgs);
       setCounts({ counts: mergedCounts });
-      // Clamp selected index
-      if (msgs.length > 0 && selectedIndex >= msgs.length) {
+      // If a cursor target was set (e.g. after archive), find it in the new list
+      if (pendingCursorTarget.current) {
+        const targetIdx = msgs.findIndex(m => m.id === pendingCursorTarget.current);
+        pendingCursorTarget.current = null;
+        if (targetIdx >= 0) {
+          setSelectedIndex(targetIdx);
+        } else if (msgs.length > 0) {
+          setSelectedIndex(Math.min(selectedIndex, msgs.length - 1));
+        }
+      } else if (msgs.length > 0 && selectedIndex >= msgs.length) {
+        // Clamp selected index
         setSelectedIndex(msgs.length - 1);
       }
     } catch (e) {
@@ -138,27 +150,60 @@ export function useMessages() {
     }
   }, [fetchMessages]);
 
-  const doMarkDone = useCallback(async (id: string) => {
-    await markDoneMessage(id);
-    await fetchMessages();
-  }, [fetchMessages]);
+  const computeCursorTarget = useCallback((ids: string[]) => {
+    const setting = afterArchiveRef.current;
+    if (setting === "stay" || messages.length === 0) return;
+
+    const idsSet = new Set(ids);
+    // Messages are sorted newest-first (index 0 = newest, higher index = older)
+    if (setting === "newer") {
+      // Newer = lower index (toward top of list)
+      for (let i = selectedIndex - 1; i >= 0; i--) {
+        if (!idsSet.has(messages[i].id)) {
+          pendingCursorTarget.current = messages[i].id;
+          return;
+        }
+      }
+      // No newer survivor — fall back to older
+      for (let i = selectedIndex + 1; i < messages.length; i++) {
+        if (!idsSet.has(messages[i].id)) {
+          pendingCursorTarget.current = messages[i].id;
+          return;
+        }
+      }
+    } else {
+      // "older" = higher index (toward bottom of list)
+      for (let i = selectedIndex + 1; i < messages.length; i++) {
+        if (!idsSet.has(messages[i].id)) {
+          pendingCursorTarget.current = messages[i].id;
+          return;
+        }
+      }
+      // No older survivor — fall back to newer
+      for (let i = selectedIndex - 1; i >= 0; i--) {
+        if (!idsSet.has(messages[i].id)) {
+          pendingCursorTarget.current = messages[i].id;
+          return;
+        }
+      }
+    }
+  }, [messages, selectedIndex]);
 
   const doMarkDoneMany = useCallback(async (ids: string[]) => {
-    for (const id of ids) await markDoneMessage(id);
+    computeCursorTarget(ids);
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
+    for (const id of ids) await markDoneMessage(id);
     await fetchMessages();
-  }, [fetchMessages]);
-
-  const doSnooze = useCallback(async (id: string, until: number) => {
-    await snoozeMessage(id, until);
-    await fetchMessages();
-  }, [fetchMessages]);
+  }, [fetchMessages, computeCursorTarget]);
 
   const doSnoozeMany = useCallback(async (ids: string[], until: number) => {
-    for (const id of ids) await snoozeMessage(id, until);
+    computeCursorTarget(ids);
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
+    for (const id of ids) await snoozeMessage(id, until);
     await fetchMessages();
-  }, [fetchMessages]);
+  }, [fetchMessages, computeCursorTarget]);
 
   const doStar = useCallback(async (id: string) => {
     await starMessage(id);
@@ -215,12 +260,14 @@ export function useMessages() {
 
   const selectAll = useCallback(() => {
     setSelectedIds(new Set(messages.map(m => m.id)));
+    setSelectionAnchor(0);
   }, [messages]);
 
   const switchTab = useCallback((newTab: string) => {
     setTab(newTab);
     setSelectedIndex(0);
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
   }, []);
 
   const cycleTab = useCallback(() => {
@@ -232,6 +279,7 @@ export function useMessages() {
     });
     setSelectedIndex(0);
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
   }, [categories]);
 
   const cyclePrevTab = useCallback(() => {
@@ -243,6 +291,7 @@ export function useMessages() {
     });
     setSelectedIndex(0);
     setSelectedIds(new Set());
+    setSelectionAnchor(null);
   }, [categories]);
 
   const moveSelection = useCallback((delta: number) => {
@@ -307,9 +356,7 @@ export function useMessages() {
     clearSelection,
     selectAll,
     doRefresh,
-    doMarkDone,
     doMarkDoneMany,
-    doSnooze,
     doSnoozeMany,
     doStar,
     doStarMany,

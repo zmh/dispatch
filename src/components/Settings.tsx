@@ -78,6 +78,7 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
     font_size: null,
     open_in_slack_app: null,
     notifications_enabled: null,
+    after_archive: null,
   });
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [loaded, setLoaded] = useState(false);
@@ -397,6 +398,27 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
                   />
                   Desktop notifications for new &amp; snoozed messages
                 </label>
+              </div>
+            </div>
+
+            <div className="settings-row-ia">
+              <span className="settings-row-label">After archive:</span>
+              <div className="settings-row-control">
+                {([
+                  { key: "newer", label: "Go to newer conversation" },
+                  { key: "older", label: "Go to older conversation" },
+                  { key: "stay", label: "Return to conversation list" },
+                ] as const).map((opt) => (
+                  <label key={opt.key} className="settings-checkbox-label">
+                    <input
+                      type="radio"
+                      name="after_archive"
+                      checked={(settings.after_archive ?? "newer") === opt.key}
+                      onChange={() => setSettings({ ...settings, after_archive: opt.key })}
+                    />
+                    {opt.label}
+                  </label>
+                ))}
               </div>
             </div>
           </div>

@@ -490,6 +490,18 @@ body {
   gap: 0;
   white-space: nowrap;
   overflow: hidden;
+  position: relative;
+}
+
+.message-row.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
 }
 
 .message-row.selected,
