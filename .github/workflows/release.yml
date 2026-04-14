@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+      - "beta"
 
 permissions:
   contents: write
@@ -38,6 +39,40 @@ jobs:
           mkdir -p ~/private_keys
           echo "$APPLE_API_KEY_CONTENT" > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
 
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "beta" ]; then
+            echo "release_name=Dispatch Beta" >> "$GITHUB_OUTPUT"
+            echo "release_body=Beta channel build for testing before production release." >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_name=Dispatch ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "release_body=See the assets to download and install this version." >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Delete previous beta release
+        if: github.ref_name == 'beta'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/beta"
+          release_id="$(
+            curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${release_api}" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' \
+              2>/dev/null || true
+          )"
+          if [ -n "${release_id}" ]; then
+            curl -fsSL -X DELETE \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          fi
+
       - name: Build, sign, notarize, and create release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -52,7 +87,7 @@ jobs:
           APPLE_API_KEY_PATH: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "Dispatch ${{ github.ref_name }}"
-          releaseBody: "See the assets to download and install this version."
+          releaseName: ${{ steps.release_meta.outputs.release_name }}
+          releaseBody: ${{ steps.release_meta.outputs.release_body }}
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ steps.release_meta.outputs.prerelease }}
