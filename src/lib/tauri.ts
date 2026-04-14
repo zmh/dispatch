@@ -13,6 +13,7 @@ export interface Message {
   classification: string;
   status: string;
   starred: boolean;
+  unread: boolean;
   snoozed_until: number | null;
   created_at: number;
 }
@@ -117,6 +118,10 @@ export async function snoozeMessage(id: string, until: number): Promise<void> {
 
 export async function starMessage(id: string): Promise<boolean> {
   return invoke("star_message", { id });
+}
+
+export async function setUnreadMessage(id: string, unread: boolean): Promise<boolean> {
+  return invoke("set_unread_message", { id, unread });
 }
 
 export async function openLink(url: string, useSlackApp: boolean = false): Promise<void> {

@@ -638,6 +638,15 @@ pub async fn star_message(state: State<'_, AppState>, id: String) -> Result<bool
     state.db.toggle_star(&id)
 }
 
+#[tauri::command]
+pub async fn set_unread_message(
+    state: State<'_, AppState>,
+    id: String,
+    unread: bool,
+) -> Result<bool, String> {
+    state.db.set_unread_message(&id, unread)
+}
+
 /// Convert a Slack permalink (https://workspace.slack.com/archives/C.../p...)
 /// into a slack:// deep link that opens directly in the Slack desktop app.
 fn slack_permalink_to_deeplink(url: &str, team_id: &str) -> Option<String> {

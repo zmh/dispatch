@@ -25,6 +25,7 @@ interface UseKeyboardProps {
   doMarkDoneMany: (ids: string[]) => Promise<void>;
   doStar: (id: string) => Promise<void>;
   doStarMany: (ids: string[]) => Promise<void>;
+  doToggleUnreadMany: (ids: string[]) => Promise<void>;
   doOpenLink: (url: string) => Promise<void>;
   doRefresh: () => Promise<void>;
   setShowSnoozeForSelected: () => void;
@@ -54,6 +55,7 @@ export function useKeyboard({
   doMarkDoneMany,
   doStar,
   doStarMany,
+  doToggleUnreadMany,
   doOpenLink,
   doRefresh,
   setShowSnoozeForSelected,
@@ -156,6 +158,14 @@ export function useKeyboard({
           }
           break;
         }
+        case "u": {
+          const ids = getActionIds();
+          if (ids.length > 0) {
+            e.preventDefault();
+            doToggleUnreadMany(ids);
+          }
+          break;
+        }
         case "h": {
           const ids = getActionIds();
           if (ids.length > 0) {
@@ -225,6 +235,7 @@ export function useKeyboard({
       doMarkDoneMany,
       doStar,
       doStarMany,
+      doToggleUnreadMany,
       doOpenLink,
       doRefresh,
       setShowSettings,

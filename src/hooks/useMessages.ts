@@ -13,6 +13,7 @@ import {
   markDoneMessage,
   snoozeMessage,
   starMessage,
+  setUnreadMessage,
   openLink,
   RefreshResult,
   setWindowTheme,
@@ -72,6 +73,7 @@ export function useMessages() {
   const afterArchiveRef = useRef<string>("newer");
   const pendingCursorTarget = useRef<string | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const previewedMessageIdRef = useRef<string | null>(null);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -229,6 +231,38 @@ export function useMessages() {
     await fetchMessages();
   }, [fetchMessages]);
 
+  const setUnreadLocal = useCallback((ids: string[], unread: boolean) => {
+    if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    setMessages(prev => {
+      let changed = false;
+      const next = prev.map((msg) => {
+        if (!idSet.has(msg.id) || msg.unread === unread) return msg;
+        changed = true;
+        return { ...msg, unread };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const doSetUnreadMany = useCallback(async (ids: string[], unread: boolean) => {
+    if (ids.length === 0) return;
+    setUnreadLocal(ids, unread);
+    try {
+      await Promise.all(ids.map(id => setUnreadMessage(id, unread)));
+    } catch (e) {
+      console.error("Failed to update unread status:", e);
+      await fetchMessages();
+    }
+  }, [fetchMessages, setUnreadLocal]);
+
+  const doToggleUnreadMany = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const byId = new Map(messages.map(msg => [msg.id, msg]));
+    const allRead = ids.every(id => !byId.get(id)?.unread);
+    await doSetUnreadMany(ids, allRead);
+  }, [messages, doSetUnreadMany]);
+
   const doOpenLink = useCallback(async (url: string) => {
     try {
       const settings = await getSettings();
@@ -277,13 +311,17 @@ export function useMessages() {
   }, [messages]);
 
   const switchTab = useCallback((newTab: string) => {
+    // Prevent a transient tab-switch render from auto-reading the previous tab's first row.
+    previewedMessageIdRef.current = messages[0]?.id ?? null;
     setTab(newTab);
     setSelectedIndex(0);
     setSelectedIds(new Set());
     setSelectionAnchor(null);
-  }, []);
+  }, [messages]);
 
   const cycleTab = useCallback(() => {
+    // Prevent a transient tab-switch render from auto-reading the previous tab's first row.
+    previewedMessageIdRef.current = messages[0]?.id ?? null;
     setTab(prev => {
       const idx = categories.findIndex(c => c.name === prev);
       if (idx < 0) return categories[0].name;
@@ -293,9 +331,11 @@ export function useMessages() {
     setSelectedIndex(0);
     setSelectedIds(new Set());
     setSelectionAnchor(null);
-  }, [categories]);
+  }, [categories, messages]);
 
   const cyclePrevTab = useCallback(() => {
+    // Prevent a transient tab-switch render from auto-reading the previous tab's first row.
+    previewedMessageIdRef.current = messages[0]?.id ?? null;
     setTab(prev => {
       const idx = categories.findIndex(c => c.name === prev);
       if (idx < 0) return categories[0].name;
@@ -305,7 +345,7 @@ export function useMessages() {
     setSelectedIndex(0);
     setSelectedIds(new Set());
     setSelectionAnchor(null);
-  }, [categories]);
+  }, [categories, messages]);
 
   const moveSelection = useCallback((delta: number) => {
     setSelectedIndex(prev => {
@@ -356,6 +396,21 @@ export function useMessages() {
     };
   }, [fetchMessages]);
 
+  // Mark newly previewed messages as read when the cursor/hovered row changes.
+  useEffect(() => {
+    const current = messages[selectedIndex];
+    const currentId = current?.id ?? null;
+
+    if (currentId === previewedMessageIdRef.current) {
+      return;
+    }
+    previewedMessageIdRef.current = currentId;
+
+    if (current && current.unread) {
+      doSetUnreadMany([current.id], false);
+    }
+  }, [messages, selectedIndex, doSetUnreadMany]);
+
   return {
     tab,
     messages,
@@ -383,6 +438,7 @@ export function useMessages() {
     doSnoozeMany,
     doStar,
     doStarMany,
+    doToggleUnreadMany,
     doOpenLink,
     fetchMessages,
     loadCategories,

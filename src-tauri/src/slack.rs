@@ -738,6 +738,7 @@ pub async fn fetch_slack_messages_with_sync(
                         classification: "unclassified".to_string(),
                         status: "inbox".to_string(),
                         starred: false,
+                        unread: true,
                         snoozed_until: None,
                         created_at: now,
                     },

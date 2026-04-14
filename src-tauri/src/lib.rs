@@ -257,6 +257,7 @@ pub fn run() {
             commands::mark_done_message,
             commands::snooze_message,
             commands::star_message,
+            commands::set_unread_message,
             commands::open_link,
             commands::get_settings,
             commands::save_settings,

@@ -41,6 +41,7 @@ function App() {
     doSnoozeMany,
     doStar,
     doStarMany,
+    doToggleUnreadMany,
     doOpenLink,
     fetchMessages,
     loadCategories,
@@ -192,6 +193,7 @@ function App() {
     doMarkDoneMany,
     doStar,
     doStarMany,
+    doToggleUnreadMany,
     doOpenLink,
     doRefresh,
     setShowSnoozeForSelected,
@@ -281,6 +283,7 @@ function App() {
             <span className="shortcut"><kbd>e</kbd> done</span>
             <span className="shortcut"><kbd>h</kbd> snooze</span>
             <span className="shortcut"><kbd>s</kbd> star</span>
+            <span className="shortcut"><kbd>u</kbd> unread</span>
             <span className="shortcut"><kbd>↵</kbd> open</span>
             <span className="shortcut"><kbd>Esc</kbd> clear</span>
           </>
@@ -291,6 +294,7 @@ function App() {
             <span className="shortcut"><kbd>e</kbd> done</span>
             <span className="shortcut"><kbd>h</kbd> snooze</span>
             <span className="shortcut"><kbd>s</kbd> star</span>
+            <span className="shortcut"><kbd>u</kbd> unread</span>
             <span className="shortcut"><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
             <span className="shortcut"><kbd>↵</kbd> open</span>
             <span className="shortcut"><kbd>r</kbd> refresh</span>
@@ -339,6 +343,7 @@ function App() {
               <div className="shortcut-row"><kbd>e</kbd><span>Mark done</span></div>
               <div className="shortcut-row"><kbd>h</kbd><span>Snooze message</span></div>
               <div className="shortcut-row"><kbd>s</kbd><span>Toggle star</span></div>
+              <div className="shortcut-row"><kbd>u</kbd><span>Toggle unread</span></div>
               <div className="shortcut-row"><kbd>Enter</kbd><span>Open in browser</span></div>
               <div className="shortcut-row"><kbd>r</kbd><span>Refresh inbox</span></div>
               <div className="shortcut-row"><kbd>Tab</kbd><span>Cycle tabs</span></div>

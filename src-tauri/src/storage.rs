@@ -43,6 +43,7 @@ impl Database {
                 classification TEXT DEFAULT 'other',
                 status TEXT DEFAULT 'inbox',
                 starred INTEGER DEFAULT 0,
+                unread INTEGER DEFAULT 0,
                 snoozed_until INTEGER,
                 created_at INTEGER NOT NULL
             );
@@ -77,6 +78,15 @@ impl Database {
             .is_ok();
         if !has_avatar_url {
             conn.execute_batch("ALTER TABLE messages ADD COLUMN avatar_url TEXT;")
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Migration: add unread column if missing
+        let has_unread: bool = conn
+            .prepare("SELECT unread FROM messages LIMIT 0")
+            .is_ok();
+        if !has_unread {
+            conn.execute_batch("ALTER TABLE messages ADD COLUMN unread INTEGER DEFAULT 0;")
                 .map_err(|e| e.to_string())?;
         }
 
@@ -129,8 +139,8 @@ impl Database {
             .map_err(|e| e.to_string())?;
         let mut upsert_stmt = tx
             .prepare(
-                "INSERT INTO messages (id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                "INSERT INTO messages (id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(id) DO UPDATE SET
                     source = excluded.source,
                     sender = excluded.sender,
@@ -202,6 +212,7 @@ impl Database {
                     msg.classification,
                     msg.status,
                     msg.starred as i32,
+                    msg.unread as i32,
                     msg.snoozed_until,
                     msg.created_at,
                 ])
@@ -228,12 +239,12 @@ impl Database {
         ).map_err(|e| e.to_string())?;
 
         let sql = if classification == "other" {
-            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
              FROM messages
              WHERE status = ?1 AND (classification = 'other' OR classification = 'unclassified')
              ORDER BY timestamp DESC"
         } else {
-            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
              FROM messages
              WHERE classification = ?1 AND status = ?2
              ORDER BY timestamp DESC"
@@ -255,8 +266,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -277,8 +289,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -304,7 +317,7 @@ impl Database {
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
                  FROM messages
                  WHERE status = ?1
                  ORDER BY timestamp DESC",
@@ -326,8 +339,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -341,7 +355,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
                  FROM messages
                  WHERE starred = 1
                  ORDER BY timestamp DESC",
@@ -363,8 +377,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -466,6 +481,28 @@ impl Database {
         Ok(new_val != 0)
     }
 
+    pub fn set_unread_message(&self, id: &str, unread: bool) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+
+        let current: i32 = conn
+            .query_row(
+                "SELECT unread FROM messages WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let target = if unread { 1 } else { 0 };
+        if current != target {
+            conn.execute(
+                "UPDATE messages SET unread = ?2 WHERE id = ?1",
+                params![id, target],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        Ok(unread)
+    }
+
     pub fn update_classification(&self, id: &str, classification: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
@@ -480,7 +517,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
                  FROM messages
                  WHERE classification = 'unclassified'
                  ORDER BY timestamp DESC",
@@ -502,8 +539,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -520,7 +558,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
-            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
              FROM messages
              WHERE classification = 'unclassified'
                AND status = 'inbox'
@@ -549,8 +587,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -563,7 +602,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, unread, snoozed_until, created_at
                  FROM messages
                  WHERE classification = 'unclassified' AND status = 'inbox'
                  ORDER BY timestamp DESC
@@ -586,8 +625,9 @@ impl Database {
                     classification: row.get(9)?,
                     status: row.get(10)?,
                     starred: row.get::<_, i32>(11)? != 0,
-                    snoozed_until: row.get(12)?,
-                    created_at: row.get(13)?,
+                    unread: row.get::<_, i32>(12)? != 0,
+                    snoozed_until: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -1268,6 +1308,7 @@ mod tests {
         status: &str,
         body: &str,
         starred: bool,
+        unread: bool,
         snoozed_until: Option<i64>,
     ) -> Message {
         Message {
@@ -1283,6 +1324,7 @@ mod tests {
             classification: classification.to_string(),
             status: status.to_string(),
             starred,
+            unread,
             snoozed_until,
             created_at: 1_700_000_000,
         }
@@ -1291,8 +1333,8 @@ mod tests {
     #[test]
     fn other_tab_includes_unclassified_and_counts_fold() {
         let db = Database::new(":memory:").expect("db init");
-        let m1 = sample_message("m1", "other", "inbox", "hello", false, None);
-        let m2 = sample_message("m2", "unclassified", "inbox", "world", false, None);
+        let m1 = sample_message("m1", "other", "inbox", "hello", false, false, None);
+        let m2 = sample_message("m2", "unclassified", "inbox", "world", false, false, None);
         db.upsert_messages_batch(&[m1, m2]).expect("insert");
 
         let other = db.get_messages("other", "inbox").expect("load other");
@@ -1313,12 +1355,13 @@ mod tests {
             "archived",
             "old body",
             true,
+            true,
             Some(1_700_001_000),
         );
         db.upsert_messages_batch(&[original]).expect("seed");
 
         let mut updated =
-            sample_message("same-id", "unclassified", "inbox", "new body", false, None);
+            sample_message("same-id", "unclassified", "inbox", "new body", false, false, None);
         updated.avatar_url = None;
         db.upsert_messages_batch(&[updated]).expect("upsert");
 
@@ -1330,10 +1373,86 @@ mod tests {
         assert_eq!(row.body, "new body");
         assert_eq!(row.classification, "important");
         assert!(row.starred);
+        assert!(row.unread);
         assert_eq!(row.snoozed_until, Some(1_700_001_000));
         assert_eq!(
             row.avatar_url.as_deref(),
             Some("https://example.com/avatar.png")
         );
+    }
+
+    #[test]
+    fn set_unread_is_idempotent() {
+        let db = Database::new(":memory:").expect("db init");
+        let msg = sample_message("m1", "other", "inbox", "hello", false, false, None);
+        db.upsert_messages_batch(&[msg]).expect("insert");
+
+        db.set_unread_message("m1", true).expect("set unread");
+        db.set_unread_message("m1", true).expect("set unread again");
+
+        let row = db
+            .get_messages("other", "inbox")
+            .expect("load rows")
+            .into_iter()
+            .find(|m| m.id == "m1")
+            .expect("message exists");
+        assert!(row.unread);
+    }
+
+    #[test]
+    fn set_unread_errors_for_missing_id() {
+        let db = Database::new(":memory:").expect("db init");
+        let err = db
+            .set_unread_message("missing", true)
+            .expect_err("missing id should error");
+        assert!(err.contains("Query returned no rows"));
+    }
+
+    #[test]
+    fn init_migrates_unread_column_on_existing_db() {
+        let tmp = std::env::temp_dir().join(format!(
+            "dispatch-unread-migration-{}.sqlite",
+            std::process::id()
+        ));
+        if tmp.exists() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+
+        {
+            let conn = Connection::open(&tmp).expect("open legacy db");
+            conn.execute_batch(
+                "CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    subject TEXT,
+                    body TEXT NOT NULL,
+                    body_html TEXT,
+                    permalink TEXT,
+                    avatar_url TEXT,
+                    timestamp INTEGER NOT NULL,
+                    classification TEXT DEFAULT 'other',
+                    status TEXT DEFAULT 'inbox',
+                    starred INTEGER DEFAULT 0,
+                    snoozed_until INTEGER,
+                    created_at INTEGER NOT NULL
+                );",
+            )
+            .expect("create legacy schema");
+        }
+
+        let db = Database::new(tmp.to_str().expect("tmp path str")).expect("open migrated db");
+        let migrated = sample_message("m1", "other", "inbox", "hello", false, true, None);
+        db.upsert_messages_batch(&[migrated]).expect("insert");
+
+        let row = db
+            .get_messages("other", "inbox")
+            .expect("load rows")
+            .into_iter()
+            .find(|m| m.id == "m1")
+            .expect("message exists");
+        assert!(row.unread);
+
+        let _ = std::fs::remove_file(tmp);
     }
 }

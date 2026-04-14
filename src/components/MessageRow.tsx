@@ -43,8 +43,10 @@ export function MessageRow({ message, selected, checked, onClick, onDoubleClick,
       onDoubleClick={onDoubleClick}
       onMouseEnter={onMouseEnter}
     >
-      <span className="msg-check">{checked ? "●" : ""}</span>
-      <span className="msg-star">{message.starred ? "★" : " "}</span>
+      <span className="msg-indicators">
+        {message.unread ? <span className="msg-indicator msg-unread" /> : null}
+        {message.starred ? <span className="msg-indicator msg-star">★</span> : null}
+      </span>
       <span className="msg-source">{source}</span>
       <span className="msg-dot">·</span>
       <span className="msg-sender">{message.sender}</span>

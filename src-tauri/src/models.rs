@@ -17,6 +17,7 @@ pub struct Message {
     pub classification: String,
     pub status: String,
     pub starred: bool,
+    pub unread: bool,
     pub snoozed_until: Option<i64>,
     pub created_at: i64,
 }
