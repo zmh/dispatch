@@ -1,8 +1,8 @@
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::models::{Message, SlackChannel, SlackFilter, SlackUser};
 
@@ -105,6 +105,7 @@ struct UserMember {
 #[derive(Debug, Deserialize)]
 struct UserProfile {
     real_name: Option<String>,
+    image_72: Option<String>,
 }
 
 // -- Conversations list API types --
@@ -144,6 +145,34 @@ struct ImConversationsListResponse {
 #[derive(Debug, Deserialize)]
 struct ResponseMetadata {
     next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct QuerySyncState {
+    pub checkpoint_ts: Option<i64>,
+    pub force_deep_scan: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct FetchedSlackMessage {
+    pub message: Message,
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryFetchResult {
+    pub query_key: String,
+    pub max_timestamp: Option<i64>,
+    pub success: bool,
+    pub ran_deep_scan: bool,
+    pub stopped_early: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SlackFetchOutput {
+    pub messages: Vec<FetchedSlackMessage>,
+    pub query_results: Vec<QueryFetchResult>,
+    pub errors: Vec<String>,
 }
 
 /// Slack emoji shortcodes that differ from the standard shortcodes in the `emojis` crate.
@@ -315,7 +344,10 @@ fn slack_to_html(text: &str) -> String {
                 inner.push(c);
             }
             if inner.starts_with('@') || inner.starts_with("!subteam") {
-                let label = inner.split('|').nth(1).map(|l| format!("@{}", l))
+                let label = inner
+                    .split('|')
+                    .nth(1)
+                    .map(|l| format!("@{}", l))
                     .unwrap_or_else(|| inner.clone());
                 result.push_str(&format!("<strong>{}</strong>", html_escape(&label)));
             } else if inner.starts_with('!') {
@@ -323,7 +355,10 @@ fn slack_to_html(text: &str) -> String {
                 let label = cmd.split('|').next().unwrap_or(cmd);
                 result.push_str(&format!("<strong>@{}</strong>", html_escape(label)));
             } else if inner.starts_with('#') {
-                let label = inner.split('|').nth(1).map(|l| format!("#{}", l))
+                let label = inner
+                    .split('|')
+                    .nth(1)
+                    .map(|l| format!("#{}", l))
                     .unwrap_or_else(|| inner.clone());
                 result.push_str(&format!("<strong>{}</strong>", html_escape(&label)));
             } else {
@@ -357,6 +392,193 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+pub fn normalize_query_for_sync(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|token| !token.to_ascii_lowercase().starts_with("after:"))
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn build_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+async fn fetch_search_page_with_retry(
+    client: &reqwest::Client,
+    headers: &HeaderMap,
+    query: &str,
+    page: u32,
+    max_retries: usize,
+) -> Result<SlackSearchResponse, String> {
+    let page_str = page.to_string();
+    let mut attempt = 0usize;
+    loop {
+        let response = client
+            .get("https://slack.com/api/search.messages")
+            .headers(headers.clone())
+            .query(&[
+                ("query", query),
+                ("sort", "timestamp"),
+                ("sort_dir", "desc"),
+                ("count", "100"),
+                ("page", page_str.as_str()),
+            ])
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("Slack response read failed: {}", e))?;
+
+                if (status.as_u16() == 429 || status.is_server_error()) && attempt < max_retries {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                if !status.is_success() {
+                    let preview = if text.len() > 300 {
+                        &text[..300]
+                    } else {
+                        &text
+                    };
+                    return Err(format!(
+                        "Slack search.messages HTTP {}: {}",
+                        status.as_u16(),
+                        preview
+                    ));
+                }
+
+                let data: SlackSearchResponse = serde_json::from_str(&text)
+                    .map_err(|e| format!("Failed to parse Slack response: {}", e))?;
+                if !data.ok && data.error.as_deref() == Some("ratelimited") && attempt < max_retries
+                {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Ok(data);
+            }
+            Err(e) => {
+                let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                if retryable && attempt < max_retries {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("Slack request failed: {}", e));
+            }
+        }
+    }
+}
+
+async fn fetch_user_info_with_retry(
+    client: reqwest::Client,
+    headers: HeaderMap,
+    token: String,
+    user_id: String,
+    max_retries: usize,
+) -> Result<SlackUser, String> {
+    let mut attempt = 0usize;
+    loop {
+        let response = client
+            .post("https://slack.com/api/users.info")
+            .headers(headers.clone())
+            .form(&[("token", token.as_str()), ("user", user_id.as_str())])
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("users.info read failed: {}", e))?;
+
+                if (status.as_u16() == 429 || status.is_server_error()) && attempt < max_retries {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                if !status.is_success() {
+                    let preview = if text.len() > 300 {
+                        &text[..300]
+                    } else {
+                        &text
+                    };
+                    return Err(format!("users.info HTTP {}: {}", status.as_u16(), preview));
+                }
+
+                let raw = serde_json::from_str::<serde_json::Value>(&text)
+                    .map_err(|e| format!("users.info parse failed: {}", e))?;
+                let ok = raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !ok {
+                    let err = raw
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    if err == "ratelimited" && attempt < max_retries {
+                        let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(format!("users.info error: {}", err));
+                }
+
+                let user = raw.get("user").unwrap_or(&serde_json::Value::Null);
+                let profile = user.get("profile").unwrap_or(&serde_json::Value::Null);
+                let name = user
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let real_name = profile
+                    .get("real_name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| user.get("real_name").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                let avatar_url = profile
+                    .get("image_72")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                return Ok(SlackUser {
+                    id: user_id.clone(),
+                    name,
+                    real_name,
+                    avatar_url,
+                });
+            }
+            Err(e) => {
+                let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                if retryable && attempt < max_retries {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("users.info failed: {}", e));
+            }
+        }
+    }
+}
+
 /// Build individual search queries from filters (one per filter to avoid OR/grouping issues).
 /// Always includes `to:me` to capture DMs and @-mentions directed at the user.
 fn build_queries_from_filters(filters: &[SlackFilter], cutoff_date: &str) -> Vec<String> {
@@ -379,13 +601,18 @@ fn build_queries_from_filters(filters: &[SlackFilter], cutoff_date: &str) -> Vec
     queries
 }
 
-pub async fn fetch_slack_messages(
+pub async fn fetch_slack_messages_with_sync(
     token: &str,
     cookie: &str,
     filters: Option<&[SlackFilter]>,
-) -> Result<Vec<Message>, String> {
-    let client = reqwest::Client::new();
+    sync_state: &HashMap<String, QuerySyncState>,
+    overlap_seconds: i64,
+    page_limit: u32,
+    max_retries: usize,
+) -> Result<SlackFetchOutput, String> {
+    let client = build_http_client()?;
     let headers = build_headers(token, cookie)?;
+    let effective_page_limit = page_limit.max(1);
 
     let thirty_days_ago = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -409,35 +636,48 @@ pub async fn fetch_slack_messages(
         .as_secs() as i64;
 
     let mut all_messages = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
-    let mut user_id_to_msg_indices: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    let mut seen_ids = HashSet::new();
+    let mut query_results = Vec::new();
+    let mut errors = Vec::new();
 
     // Run each filter as a separate query to avoid OR/grouping issues
     for query in &queries {
+        let query_key = normalize_query_for_sync(query);
+        let query_sync = sync_state.get(&query_key).cloned().unwrap_or_default();
+        let lower_bound = if query_sync.force_deep_scan {
+            None
+        } else {
+            query_sync
+                .checkpoint_ts
+                .map(|ts| ts.saturating_sub(overlap_seconds.max(0)))
+        };
+
         let mut page: u32 = 1;
+        let mut query_max_ts: Option<i64> = None;
+        let mut query_success = true;
+        let mut stopped_early = false;
 
         loop {
-            let page_str = page.to_string();
-            let response = client
-                .get("https://slack.com/api/search.messages")
-                .headers(headers.clone())
-                .query(&[
-                    ("query", query.as_str()),
-                    ("sort", "timestamp"),
-                    ("sort_dir", "desc"),
-                    ("count", "100"),
-                    ("page", page_str.as_str()),
-                ])
-                .send()
-                .await
-                .map_err(|e| format!("Slack request failed: {}", e))?;
-
-            let data: SlackSearchResponse = response
-                .json()
-                .await
-                .map_err(|e| format!("Failed to parse Slack response: {}", e))?;
+            let data =
+                match fetch_search_page_with_retry(&client, &headers, query, page, max_retries)
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        query_success = false;
+                        errors.push(format!("{} (query=\"{}\", page={})", e, query_key, page));
+                        break;
+                    }
+                };
 
             if !data.ok {
+                query_success = false;
+                errors.push(format!(
+                    "Slack search.messages error: {} (query=\"{}\", page={})",
+                    data.error.unwrap_or_else(|| "unknown".to_string()),
+                    query_key,
+                    page
+                ));
                 break;
             }
 
@@ -447,97 +687,150 @@ pub async fn fetch_slack_messages(
             };
 
             let total_pages = slack_messages.paging.map(|p| p.pages).unwrap_or(1);
+            let mut stop_query = false;
 
             for m in slack_messages.matches {
+                let ts_float: f64 = m.ts.parse().unwrap_or(0.0);
+                let ts = ts_float as i64;
+                if query_max_ts.map_or(true, |max_ts| ts > max_ts) {
+                    query_max_ts = Some(ts);
+                }
+
+                if let Some(boundary) = lower_bound {
+                    if ts < boundary {
+                        stopped_early = true;
+                        stop_query = true;
+                        break;
+                    }
+                }
+
                 let msg_id = format!("slack:{}", m.ts);
                 if !seen_ids.insert(msg_id.clone()) {
                     continue; // skip duplicates across queries
                 }
-                let ts_float: f64 = m.ts.parse().unwrap_or(0.0);
-                let ts = ts_float as i64;
                 let body = slack_to_plain(&m.text);
                 let body_html = Some(slack_to_html(&m.text));
                 // DM channels show up with user-ID-like names (e.g. "U0SCBPQTXML")
                 // Multi-person DMs use "mpdm-" prefix (e.g. "mpdm-zach.hamed--matt--sophie-1")
                 let channel_name = match &m.channel.name {
-                    Some(name) if name.len() >= 9 && name.starts_with('U') && name.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                    Some(name)
+                        if name.len() >= 9
+                            && name.starts_with('U')
+                            && name.chars().all(|c| c.is_ascii_alphanumeric()) =>
+                    {
                         Some("DM".to_string())
                     }
-                    Some(name) if name.starts_with("mpdm-") => {
-                        Some("Group DM".to_string())
-                    }
+                    Some(name) if name.starts_with("mpdm-") => Some("Group DM".to_string()),
                     other => other.clone(),
                 };
 
-                all_messages.push(Message {
-                    id: msg_id,
-                    source: "slack".to_string(),
-                    sender: m.username.unwrap_or_else(|| "unknown".to_string()),
-                    subject: channel_name,
-                    body,
-                    body_html,
-                    permalink: m.permalink,
-                    avatar_url: None, // filled in below via batch user lookup
-                    timestamp: ts,
-                    classification: "unclassified".to_string(),
-                    status: "inbox".to_string(),
-                    starred: false,
-                    snoozed_until: None,
-                    created_at: now,
+                all_messages.push(FetchedSlackMessage {
+                    message: Message {
+                        id: msg_id,
+                        source: "slack".to_string(),
+                        sender: m.username.unwrap_or_else(|| "unknown".to_string()),
+                        subject: channel_name,
+                        body,
+                        body_html,
+                        permalink: m.permalink,
+                        avatar_url: None,
+                        timestamp: ts,
+                        classification: "unclassified".to_string(),
+                        status: "inbox".to_string(),
+                        starred: false,
+                        snoozed_until: None,
+                        created_at: now,
+                    },
+                    user_id: m.user,
                 });
-                // Track user ID for avatar lookup
-                if let Some(ref uid) = m.user {
-                    if !uid.is_empty() {
-                        let idx = all_messages.len() - 1;
-                        user_id_to_msg_indices
-                            .entry(uid.clone())
-                            .or_insert_with(Vec::new)
-                            .push(idx);
-                    }
-                }
+            }
+
+            if stop_query {
+                break;
             }
 
             // Cap at 3 pages per query (300 messages) to keep things fast
-            if page >= total_pages || page >= 3 {
+            if page >= total_pages || page >= effective_page_limit {
                 break;
             }
             page += 1;
         }
+
+        query_results.push(QueryFetchResult {
+            query_key,
+            max_timestamp: query_max_ts,
+            success: query_success,
+            ran_deep_scan: query_sync.force_deep_scan,
+            stopped_early,
+        });
     }
 
-    // Batch-fetch avatar URLs for unique user IDs
-    if !user_id_to_msg_indices.is_empty() {
-        let cookie_headers = build_cookie_header(cookie)?;
-        let unique_ids: Vec<String> = user_id_to_msg_indices.keys().cloned().collect();
-        for uid in &unique_ids {
-            if let Ok(resp) = client
-                .post("https://slack.com/api/users.info")
-                .headers(cookie_headers.clone())
-                .form(&[("token", token), ("user", uid.as_str())])
-                .send()
+    Ok(SlackFetchOutput {
+        messages: all_messages,
+        query_results,
+        errors,
+    })
+}
+
+pub async fn fetch_user_profiles_by_ids(
+    token: &str,
+    cookie: &str,
+    user_ids: &[String],
+    concurrency: usize,
+    max_retries: usize,
+) -> Result<Vec<SlackUser>, String> {
+    if user_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let client = build_http_client()?;
+    let headers = build_cookie_header(cookie)?;
+    let token = token.to_string();
+    let max_parallel = concurrency.max(1);
+    let mut unique = HashSet::new();
+    let mut queue = Vec::new();
+    for user_id in user_ids {
+        if unique.insert(user_id.clone()) {
+            queue.push(user_id.clone());
+        }
+    }
+
+    let mut join_set = tokio::task::JoinSet::new();
+    let mut users = Vec::new();
+    let mut idx = 0usize;
+    while idx < queue.len() {
+        while join_set.len() < max_parallel && idx < queue.len() {
+            let uid = queue[idx].clone();
+            idx += 1;
+            let client_clone = client.clone();
+            let headers_clone = headers.clone();
+            let token_clone = token.clone();
+            join_set.spawn(async move {
+                fetch_user_info_with_retry(
+                    client_clone,
+                    headers_clone,
+                    token_clone,
+                    uid,
+                    max_retries,
+                )
                 .await
-            {
-                if let Ok(text) = resp.text().await {
-                    if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if let Some(avatar) = raw
-                            .get("user")
-                            .and_then(|u| u.get("profile"))
-                            .and_then(|p| p.get("image_72"))
-                            .and_then(|v| v.as_str())
-                        {
-                            if let Some(indices) = user_id_to_msg_indices.get(uid) {
-                                for &idx in indices {
-                                    all_messages[idx].avatar_url = Some(avatar.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+            });
+        }
+
+        if let Some(joined) = join_set.join_next().await {
+            if let Ok(Ok(user)) = joined {
+                users.push(user);
             }
         }
     }
 
-    Ok(all_messages)
+    while let Some(joined) = join_set.join_next().await {
+        if let Ok(Ok(user)) = joined {
+            users.push(user);
+        }
+    }
+
+    Ok(users)
 }
 
 /// Search Slack users by name via search.modules, plus a handle-based
@@ -568,7 +861,7 @@ pub async fn search_users_live(
     let raw: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
 
     let mut users = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_ids = HashSet::new();
 
     if raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         if let Some(items) = raw.get("items").and_then(|v| v.as_array()) {
@@ -576,17 +869,30 @@ pub async fn search_users_live(
                 let user_obj = item.get("user").unwrap_or(item);
                 if let Some(id) = user_obj.get("id").and_then(|v| v.as_str()) {
                     let profile = user_obj.get("profile");
-                    let name = user_obj.get("name").and_then(|v| v.as_str())
-                        .or_else(|| profile.and_then(|p| p.get("display_name")).and_then(|v| v.as_str()))
+                    let name = user_obj
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            profile
+                                .and_then(|p| p.get("display_name"))
+                                .and_then(|v| v.as_str())
+                        })
                         .unwrap_or("");
-                    let real_name = profile.and_then(|p| p.get("real_name")).and_then(|v| v.as_str())
+                    let real_name = profile
+                        .and_then(|p| p.get("real_name"))
+                        .and_then(|v| v.as_str())
                         .or_else(|| user_obj.get("real_name").and_then(|v| v.as_str()))
                         .unwrap_or(name);
+                    let avatar_url = profile
+                        .and_then(|p| p.get("image_72"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     if seen_ids.insert(id.to_string()) {
                         users.push(SlackUser {
                             id: id.to_string(),
                             name: name.to_string(),
                             real_name: real_name.to_string(),
+                            avatar_url,
                         });
                     }
                 }
@@ -601,7 +907,12 @@ pub async fn search_users_live(
     if let Ok(msg_resp) = client
         .get("https://slack.com/api/search.messages")
         .headers(msg_headers)
-        .query(&[("query", msg_query.as_str()), ("count", "5"), ("sort", "timestamp"), ("sort_dir", "desc")])
+        .query(&[
+            ("query", msg_query.as_str()),
+            ("count", "5"),
+            ("sort", "timestamp"),
+            ("sort_dir", "desc"),
+        ])
         .send()
         .await
     {
@@ -616,16 +927,22 @@ pub async fn search_users_live(
                         for m in matches {
                             if let Some(username) = m.get("username").and_then(|v| v.as_str()) {
                                 // Extract user_id from permalink or use username
-                                let user_id = m.get("user").and_then(|v| v.as_str())
+                                let user_id = m
+                                    .get("user")
+                                    .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
                                 if let Some(uid) = user_id {
                                     if seen_ids.insert(uid.clone()) {
                                         // We have handle but not real name — use handle as placeholder
-                                        users.insert(0, SlackUser {
-                                            id: uid,
-                                            name: username.to_string(),
-                                            real_name: username.to_string(),
-                                        });
+                                        users.insert(
+                                            0,
+                                            SlackUser {
+                                                id: uid,
+                                                name: username.to_string(),
+                                                real_name: username.to_string(),
+                                                avatar_url: None,
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -651,11 +968,22 @@ pub async fn search_users_live(
                 if let Ok(info_text) = info_resp.text().await {
                     if let Ok(info_raw) = serde_json::from_str::<serde_json::Value>(&info_text) {
                         if let Some(u) = info_raw.get("user") {
-                            if let Some(rn) = u.get("profile").and_then(|p| p.get("real_name")).and_then(|v| v.as_str()) {
+                            if let Some(rn) = u
+                                .get("profile")
+                                .and_then(|p| p.get("real_name"))
+                                .and_then(|v| v.as_str())
+                            {
                                 user.real_name = rn.to_string();
                             }
                             if let Some(n) = u.get("name").and_then(|v| v.as_str()) {
                                 user.name = n.to_string();
+                            }
+                            if let Some(avatar) = u
+                                .get("profile")
+                                .and_then(|p| p.get("image_72"))
+                                .and_then(|v| v.as_str())
+                            {
+                                user.avatar_url = Some(avatar.to_string());
                             }
                         }
                     }
@@ -699,13 +1027,15 @@ pub async fn search_channels_live(
         .await
         .map_err(|e| format!("Failed to read search.modules response: {}", e))?;
 
-    let raw: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        format!("Failed to parse search.modules JSON: {}", e)
-    })?;
+    let raw: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse search.modules JSON: {}", e))?;
 
     let ok = raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if !ok {
-        let err = raw.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let err = raw
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         return Err(format!("Slack search.modules error: {}", err));
     }
 
@@ -753,7 +1083,10 @@ pub async fn search_channels_live(
 }
 
 /// Test Slack connection and return workspace + user info.
-pub async fn test_connection(token: &str, cookie: &str) -> Result<crate::models::SlackConnectionInfo, String> {
+pub async fn test_connection(
+    token: &str,
+    cookie: &str,
+) -> Result<crate::models::SlackConnectionInfo, String> {
     let client = reqwest::Client::new();
     let headers = build_cookie_header(cookie)?;
 
@@ -781,12 +1114,33 @@ pub async fn test_connection(token: &str, cookie: &str) -> Result<crate::models:
         return Err(format!("auth.test error: {}", err));
     }
 
-    let team = raw.get("team").and_then(|v| v.as_str()).unwrap_or("Unknown workspace").to_string();
-    let user = raw.get("user").and_then(|v| v.as_str()).unwrap_or("Unknown user").to_string();
-    let team_id = raw.get("team_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let user_id = raw.get("user_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let team = raw
+        .get("team")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown workspace")
+        .to_string();
+    let user = raw
+        .get("user")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown user")
+        .to_string();
+    let team_id = raw
+        .get("team_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let user_id = raw
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-    Ok(crate::models::SlackConnectionInfo { team, user, team_id, user_id })
+    Ok(crate::models::SlackConnectionInfo {
+        team,
+        user,
+        team_id,
+        user_id,
+    })
 }
 
 /// Call auth.test to get the team ID for the current workspace.
@@ -866,8 +1220,15 @@ where
             .map_err(|e| format!("Failed to read conversations.list response: {}", e))?;
 
         let data: ConversationsListResponse = serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 300 { &text[..300] } else { &text };
-            format!("Failed to parse conversations.list: {} — response: {}", e, preview)
+            let preview = if text.len() > 300 {
+                &text[..300]
+            } else {
+                &text
+            };
+            format!(
+                "Failed to parse conversations.list: {} — response: {}",
+                e, preview
+            )
         })?;
 
         if !data.ok {
@@ -924,10 +1285,7 @@ where
     let mut cursor = String::new();
 
     loop {
-        let mut form_params = vec![
-            ("token", token.to_string()),
-            ("limit", "200".to_string()),
-        ];
+        let mut form_params = vec![("token", token.to_string()), ("limit", "200".to_string())];
 
         if !cursor.is_empty() {
             form_params.push(("cursor", cursor.clone()));
@@ -947,7 +1305,11 @@ where
             .map_err(|e| format!("Failed to read users.list response: {}", e))?;
 
         let data: UsersListResponse = serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 300 { &text[..300] } else { &text };
+            let preview = if text.len() > 300 {
+                &text[..300]
+            } else {
+                &text
+            };
             format!("Failed to parse users.list: {} — response: {}", e, preview)
         })?;
 
@@ -964,7 +1326,8 @@ where
                 if m.deleted.unwrap_or(false) || m.is_bot.unwrap_or(false) {
                     continue;
                 }
-                let real_name = m.profile
+                let real_name = m
+                    .profile
                     .as_ref()
                     .and_then(|p| p.real_name.clone())
                     .or(m.real_name)
@@ -977,6 +1340,7 @@ where
                     id: m.id,
                     name,
                     real_name,
+                    avatar_url: m.profile.and_then(|p| p.image_72),
                 });
             }
             total += page_users.len();
@@ -1027,8 +1391,15 @@ pub async fn fetch_recent_dm_user_ids(
         .map_err(|e| format!("Failed to read conversations.list (im) response: {}", e))?;
 
     let data: ImConversationsListResponse = serde_json::from_str(&text).map_err(|e| {
-        let preview = if text.len() > 300 { &text[..300] } else { &text };
-        format!("Failed to parse conversations.list (im): {} — response: {}", e, preview)
+        let preview = if text.len() > 300 {
+            &text[..300]
+        } else {
+            &text
+        };
+        format!(
+            "Failed to parse conversations.list (im): {} — response: {}",
+            e, preview
+        )
     })?;
 
     if !data.ok {
@@ -1047,4 +1418,15 @@ pub async fn fetch_recent_dm_user_ids(
         .collect();
 
     Ok(user_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_query_for_sync;
+
+    #[test]
+    fn normalize_query_strips_after_clause() {
+        let normalized = normalize_query_for_sync("to:me   after:2026-04-12  IN:General");
+        assert_eq!(normalized, "to:me in:general");
+    }
 }

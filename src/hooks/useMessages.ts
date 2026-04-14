@@ -71,6 +71,7 @@ export function useMessages() {
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const afterArchiveRef = useRef<string>("newer");
   const pendingCursorTarget = useRef<string | null>(null);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
   const loadCategories = useCallback(async () => {
     try {
@@ -138,16 +139,28 @@ export function useMessages() {
   }, [tab, selectedIndex]);
 
   const doRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const result = await refreshInbox();
-      setLastRefreshResult(result);
-      await fetchMessages();
-    } catch (e) {
-      console.error("Failed to refresh:", e);
-    } finally {
-      setRefreshing(false);
+    if (refreshPromiseRef.current) {
+      return refreshPromiseRef.current;
     }
+
+    const run = (async () => {
+      setRefreshing(true);
+      try {
+        const result = await refreshInbox();
+        setLastRefreshResult(result);
+        if (!result.in_progress) {
+          await fetchMessages();
+        }
+      } catch (e) {
+        console.error("Failed to refresh:", e);
+      } finally {
+        setRefreshing(false);
+        refreshPromiseRef.current = null;
+      }
+    })();
+
+    refreshPromiseRef.current = run;
+    return run;
   }, [fetchMessages]);
 
   const computeCursorTarget = useCallback((ids: string[]) => {
@@ -326,6 +339,16 @@ export function useMessages() {
   // Refresh when snoozed messages return (from background checker)
   useEffect(() => {
     const unlisten = listen("snooze-returned", () => {
+      fetchMessages();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [fetchMessages]);
+
+  // Refresh when background classification updates message categories.
+  useEffect(() => {
+    const unlisten = listen("messages-classified", () => {
       fetchMessages();
     });
     return () => {

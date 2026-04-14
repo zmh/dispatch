@@ -60,11 +60,19 @@ export function useKeyboard({
 }: UseKeyboardProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      const requestSettingsClose = () => {
+        if (showSettings) {
+          window.dispatchEvent(new Event("dispatch:close-settings"));
+        } else {
+          setShowSettings(false);
+        }
+      };
+
       // Don't handle keys when in input fields
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") {
         if (e.key === "Escape") {
-          setShowSettings(false);
+          requestSettingsClose();
           setShowSnooze(false);
           target.blur();
         }
@@ -73,7 +81,7 @@ export function useKeyboard({
 
       // Close dialogs on Escape
       if (e.key === "Escape") {
-        setShowSettings(false);
+        requestSettingsClose();
         setShowSnooze(false);
         setShowShortcuts(false);
         if (selectedIds.size > 0) clearSelection();

@@ -311,6 +311,7 @@ function App() {
           onClose={() => setShowSettings(false)}
           onCategoriesChanged={loadCategories}
           onMessagesChanged={fetchMessages}
+          onRequestRefresh={doRefresh}
           onRunSetup={handleRunSetup}
         />
       )}

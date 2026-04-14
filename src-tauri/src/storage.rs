@@ -1,12 +1,21 @@
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::models::{Category, CategoryRule, Message, MessageCounts, SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION};
+use crate::models::{
+    Category, CategoryRule, Message, MessageCounts, SaveSettingsResult, Settings, SlackCacheStatus,
+    SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION,
+};
 
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MessageUpsertResult {
+    pub new_ids: Vec<String>,
+    pub changed_ids: Vec<String>,
 }
 
 impl Database {
@@ -46,7 +55,8 @@ impl Database {
             CREATE TABLE IF NOT EXISTS slack_users_cache (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                real_name TEXT NOT NULL
+                real_name TEXT NOT NULL,
+                avatar_url TEXT
             );
 
             CREATE TABLE IF NOT EXISTS slack_channels_cache (
@@ -75,7 +85,18 @@ impl Database {
             .prepare("SELECT updated FROM slack_channels_cache LIMIT 0")
             .is_ok();
         if !has_updated {
-            conn.execute_batch("ALTER TABLE slack_channels_cache ADD COLUMN updated REAL DEFAULT 0;")
+            conn.execute_batch(
+                "ALTER TABLE slack_channels_cache ADD COLUMN updated REAL DEFAULT 0;",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        // Migration: add avatar_url column to slack_users_cache if missing
+        let has_user_avatar_url: bool = conn
+            .prepare("SELECT avatar_url FROM slack_users_cache LIMIT 0")
+            .is_ok();
+        if !has_user_avatar_url {
+            conn.execute_batch("ALTER TABLE slack_users_cache ADD COLUMN avatar_url TEXT;")
                 .map_err(|e| e.to_string())?;
         }
 
@@ -83,28 +104,114 @@ impl Database {
     }
 
     pub fn insert_message(&self, msg: &Message) -> Result<bool, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let result = conn.execute(
-            "INSERT OR IGNORE INTO messages (id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            params![
-                msg.id,
-                msg.source,
-                msg.sender,
-                msg.subject,
-                msg.body,
-                msg.body_html,
-                msg.permalink,
-                msg.avatar_url,
-                msg.timestamp,
-                msg.classification,
-                msg.status,
-                msg.starred as i32,
-                msg.snoozed_until,
-                msg.created_at,
-            ],
-        ).map_err(|e| e.to_string())?;
-        Ok(result > 0)
+        let upserted = self.upsert_messages_batch(std::slice::from_ref(msg))?;
+        Ok(!upserted.new_ids.is_empty())
+    }
+
+    pub fn upsert_messages_batch(
+        &self,
+        messages: &[Message],
+    ) -> Result<MessageUpsertResult, String> {
+        if messages.is_empty() {
+            return Ok(MessageUpsertResult::default());
+        }
+
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut result = MessageUpsertResult::default();
+
+        let mut select_stmt = tx
+            .prepare(
+                "SELECT source, sender, subject, body, body_html, permalink, avatar_url, timestamp
+                 FROM messages
+                 WHERE id = ?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut upsert_stmt = tx
+            .prepare(
+                "INSERT INTO messages (id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 ON CONFLICT(id) DO UPDATE SET
+                    source = excluded.source,
+                    sender = excluded.sender,
+                    subject = excluded.subject,
+                    body = excluded.body,
+                    body_html = excluded.body_html,
+                    permalink = COALESCE(excluded.permalink, messages.permalink),
+                    avatar_url = COALESCE(excluded.avatar_url, messages.avatar_url),
+                    timestamp = excluded.timestamp",
+            )
+            .map_err(|e| e.to_string())?;
+
+        for msg in messages {
+            let existing = select_stmt
+                .query_row(params![msg.id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, i64>(7)?,
+                    ))
+                })
+                .optional()
+                .map_err(|e| e.to_string())?;
+
+            if let Some((
+                source,
+                sender,
+                subject,
+                body,
+                body_html,
+                permalink,
+                avatar_url,
+                timestamp,
+            )) = existing
+            {
+                let expected_permalink = msg.permalink.clone().or(permalink.clone());
+                let expected_avatar_url = msg.avatar_url.clone().or(avatar_url.clone());
+                let changed = source != msg.source
+                    || sender != msg.sender
+                    || subject != msg.subject
+                    || body != msg.body
+                    || body_html != msg.body_html
+                    || permalink != expected_permalink
+                    || avatar_url != expected_avatar_url
+                    || timestamp != msg.timestamp;
+                if changed {
+                    result.changed_ids.push(msg.id.clone());
+                }
+            } else {
+                result.new_ids.push(msg.id.clone());
+            }
+
+            upsert_stmt
+                .execute(params![
+                    msg.id,
+                    msg.source,
+                    msg.sender,
+                    msg.subject,
+                    msg.body,
+                    msg.body_html,
+                    msg.permalink,
+                    msg.avatar_url,
+                    msg.timestamp,
+                    msg.classification,
+                    msg.status,
+                    msg.starred as i32,
+                    msg.snoozed_until,
+                    msg.created_at,
+                ])
+                .map_err(|e| e.to_string())?;
+        }
+
+        drop(upsert_stmt);
+        drop(select_stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(result)
     }
 
     pub fn get_messages(&self, classification: &str, status: &str) -> Result<Vec<Message>, String> {
@@ -120,17 +227,21 @@ impl Database {
             params![now],
         ).map_err(|e| e.to_string())?;
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
-                 FROM messages
-                 WHERE classification = ?1 AND status = ?2
-                 ORDER BY timestamp DESC",
-            )
-            .map_err(|e| e.to_string())?;
+        let sql = if classification == "other" {
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+             FROM messages
+             WHERE status = ?1 AND (classification = 'other' OR classification = 'unclassified')
+             ORDER BY timestamp DESC"
+        } else {
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+             FROM messages
+             WHERE classification = ?1 AND status = ?2
+             ORDER BY timestamp DESC"
+        };
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
 
-        let messages = stmt
-            .query_map(params![classification, status], |row| {
+        let messages = if classification == "other" {
+            stmt.query_map(params![status], |row| {
                 Ok(Message {
                     id: row.get(0)?,
                     source: row.get(1)?,
@@ -150,7 +261,30 @@ impl Database {
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+        } else {
+            stmt.query_map(params![classification, status], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    sender: row.get(2)?,
+                    subject: row.get(3)?,
+                    body: row.get(4)?,
+                    body_html: row.get(5)?,
+                    permalink: row.get(6)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+        };
 
         Ok(messages)
     }
@@ -243,7 +377,11 @@ impl Database {
     pub fn get_starred_count(&self) -> Result<usize, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let count: usize = conn
-            .query_row("SELECT COUNT(*) FROM messages WHERE starred = 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE starred = 1",
+                [],
+                |row| row.get(0),
+            )
             .map_err(|e| e.to_string())?;
         Ok(count)
     }
@@ -269,9 +407,21 @@ impl Database {
             counts.insert(classification, count);
         }
 
+        if status == "inbox" {
+            let unclassified = counts.remove("unclassified").unwrap_or(0);
+            if unclassified > 0 {
+                let other = counts.entry("other".to_string()).or_insert(0);
+                *other += unclassified;
+            }
+        }
+
         // Add starred count (across all statuses)
         let starred_count: usize = conn
-            .query_row("SELECT COUNT(*) FROM messages WHERE starred = 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE starred = 1",
+                [],
+                |row| row.get(0),
+            )
             .map_err(|e| e.to_string())?;
         counts.insert("starred".to_string(), starred_count);
 
@@ -363,6 +513,142 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn get_unclassified_messages_by_ids(&self, ids: &[String]) -> Result<Vec<Message>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+             FROM messages
+             WHERE classification = 'unclassified'
+               AND status = 'inbox'
+               AND id IN ({})
+             ORDER BY timestamp DESC",
+            placeholders.join(", ")
+        );
+
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    sender: row.get(2)?,
+                    subject: row.get(3)?,
+                    body: row.get(4)?,
+                    body_html: row.get(5)?,
+                    permalink: row.get(6)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    pub fn get_unclassified_messages_limited(&self, limit: usize) -> Result<Vec<Message>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source, sender, subject, body, body_html, permalink, avatar_url, timestamp, classification, status, starred, snoozed_until, created_at
+                 FROM messages
+                 WHERE classification = 'unclassified' AND status = 'inbox'
+                 ORDER BY timestamp DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    source: row.get(1)?,
+                    sender: row.get(2)?,
+                    subject: row.get(3)?,
+                    body: row.get(4)?,
+                    body_html: row.get(5)?,
+                    permalink: row.get(6)?,
+                    avatar_url: row.get(7)?,
+                    timestamp: row.get(8)?,
+                    classification: row.get(9)?,
+                    status: row.get(10)?,
+                    starred: row.get::<_, i32>(11)? != 0,
+                    snoozed_until: row.get(12)?,
+                    created_at: row.get(13)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    pub fn get_unclassified_inbox_count(&self) -> Result<usize, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let count: usize = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE classification = 'unclassified' AND status = 'inbox'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
+    pub fn update_classifications_batch(
+        &self,
+        classifications: &[(String, String)],
+    ) -> Result<usize, String> {
+        if classifications.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut updated = 0usize;
+        let mut stmt = tx
+            .prepare("UPDATE messages SET classification = ?2 WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        for (id, class) in classifications {
+            updated += stmt
+                .execute(params![id, class])
+                .map_err(|e| e.to_string())?;
+        }
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated)
+    }
+
+    pub fn set_messages_to_other_by_ids(&self, ids: &[String]) -> Result<usize, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut updated = 0usize;
+        let mut stmt = tx
+            .prepare("UPDATE messages SET classification = 'other' WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        for id in ids {
+            updated += stmt.execute(params![id]).map_err(|e| e.to_string())?;
+        }
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated)
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let result = conn.query_row(
@@ -410,24 +696,26 @@ impl Database {
         let old_prompt = self.get_setting("classification_prompt")?;
         let mut categories = categories;
         if let Some(ref prompt) = old_prompt {
-            let needs_migration = categories.as_ref().map_or(true, |cats| {
-                cats.iter().all(|c| c.description.is_none())
-            });
+            let needs_migration = categories
+                .as_ref()
+                .map_or(true, |cats| cats.iter().all(|c| c.description.is_none()));
             if needs_migration {
-                let mut cats = categories.unwrap_or_else(|| vec![
-                    Category {
-                        name: "important".to_string(),
-                        builtin: true,
-                        position: 0,
-                        description: None,
-                    },
-                    Category {
-                        name: "other".to_string(),
-                        builtin: true,
-                        position: 1,
-                        description: None,
-                    },
-                ]);
+                let mut cats = categories.unwrap_or_else(|| {
+                    vec![
+                        Category {
+                            name: "important".to_string(),
+                            builtin: true,
+                            position: 0,
+                            description: None,
+                        },
+                        Category {
+                            name: "other".to_string(),
+                            builtin: true,
+                            position: 1,
+                            description: None,
+                        },
+                    ]
+                });
                 for cat in &mut cats {
                     if cat.name == "important" {
                         cat.description = Some(prompt.clone());
@@ -464,12 +752,30 @@ impl Database {
             slack_filters,
             categories,
             category_rules,
-            theme: self.get_setting("theme")?.or_else(|| Some("dark".to_string())),
-            font: self.get_setting("font")?.or_else(|| Some("system".to_string())),
-            font_size: self.get_setting("font_size")?.or_else(|| Some("s".to_string())),
-            open_in_slack_app: self.get_setting("open_in_slack_app")?.map(|v| v == "true").or(Some(false)),
-            notifications_enabled: self.get_setting("notifications_enabled")?.map(|v| v == "true").or(Some(true)),
-            after_archive: self.get_setting("after_archive")?.or_else(|| Some("newer".to_string())),
+            theme: self
+                .get_setting("theme")?
+                .or_else(|| Some("dark".to_string())),
+            font: self
+                .get_setting("font")?
+                .or_else(|| Some("system".to_string())),
+            font_size: self
+                .get_setting("font_size")?
+                .or_else(|| Some("s".to_string())),
+            open_in_slack_app: self
+                .get_setting("open_in_slack_app")?
+                .map(|v| v == "true")
+                .or(Some(false)),
+            notifications_enabled: self
+                .get_setting("notifications_enabled")?
+                .map(|v| v == "true")
+                .or(Some(true)),
+            beta_release_channel: self
+                .get_setting("beta_release_channel")?
+                .map(|v| v == "true")
+                .or(Some(false)),
+            after_archive: self
+                .get_setting("after_archive")?
+                .or_else(|| Some("newer".to_string())),
         })
     }
 
@@ -507,7 +813,11 @@ impl Database {
                 }
             }
 
-            self.set_setting("slack_filters", &json)?;
+            if old_filters_json.as_deref() != Some(&json) {
+                self.set_setting("slack_filters", &json)?;
+                // Filter changes invalidate query checkpoints.
+                let _ = self.delete_setting("slack_incremental_state_v1");
+            }
         }
 
         // Save categories — detect description changes and reassign removed categories
@@ -581,6 +891,9 @@ impl Database {
         if let Some(val) = settings.notifications_enabled {
             self.set_setting("notifications_enabled", if val { "true" } else { "false" })?;
         }
+        if let Some(val) = settings.beta_release_channel {
+            self.set_setting("beta_release_channel", if val { "true" } else { "false" })?;
+        }
         if let Some(ref val) = settings.after_archive {
             self.set_setting("after_archive", val)?;
         }
@@ -604,7 +917,10 @@ impl Database {
         Ok(count)
     }
 
-    pub fn archive_messages_for_removed_filter(&self, filter: &SlackFilter) -> Result<usize, String> {
+    pub fn archive_messages_for_removed_filter(
+        &self,
+        filter: &SlackFilter,
+    ) -> Result<usize, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let count = match filter.filter_type.as_str() {
             "channel" => {
@@ -617,11 +933,13 @@ impl Database {
             }
             "user" => {
                 // Look up the Slack username from cache — sender stores username, not display_name
-                let username: Option<String> = conn.query_row(
-                    "SELECT name FROM slack_users_cache WHERE id = ?1",
-                    params![filter.id],
-                    |row| row.get(0),
-                ).ok();
+                let username: Option<String> = conn
+                    .query_row(
+                        "SELECT name FROM slack_users_cache WHERE id = ?1",
+                        params![filter.id],
+                        |row| row.get(0),
+                    )
+                    .ok();
                 let sender_name = username.as_deref().unwrap_or(&filter.display_name);
                 conn.execute(
                     "UPDATE messages SET status = 'archived' WHERE status = 'inbox' AND sender = ?1",
@@ -667,10 +985,10 @@ impl Database {
     pub fn append_slack_users(&self, users: &[SlackUser]) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("INSERT OR REPLACE INTO slack_users_cache (id, name, real_name) VALUES (?1, ?2, ?3)")
+            .prepare("INSERT OR REPLACE INTO slack_users_cache (id, name, real_name, avatar_url) VALUES (?1, ?2, ?3, ?4)")
             .map_err(|e| e.to_string())?;
         for u in users {
-            stmt.execute(params![u.id, u.name, u.real_name])
+            stmt.execute(params![u.id, u.name, u.real_name, u.avatar_url])
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
@@ -688,13 +1006,109 @@ impl Database {
         Ok(())
     }
 
+    pub fn get_slack_user_avatars(
+        &self,
+        ids: &[String],
+    ) -> Result<HashMap<String, String>, String> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            "SELECT id, avatar_url FROM slack_users_cache WHERE id IN ({}) AND avatar_url IS NOT NULL",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (id, avatar) = row.map_err(|e| e.to_string())?;
+            out.insert(id, avatar);
+        }
+        Ok(out)
+    }
+
+    pub fn upsert_slack_user_avatar(
+        &self,
+        user_id: &str,
+        username: Option<&str>,
+        real_name: Option<&str>,
+        avatar_url: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let existing = conn
+            .query_row(
+                "SELECT name, real_name FROM slack_users_cache WHERE id = ?1",
+                params![user_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let existing_name = existing.as_ref().map(|v| v.0.as_str()).unwrap_or_default();
+        let existing_real_name = existing.as_ref().map(|v| v.1.as_str()).unwrap_or_default();
+        let final_name = username.unwrap_or(existing_name);
+        let final_real_name = real_name.unwrap_or(existing_real_name);
+
+        conn.execute(
+            "INSERT INTO slack_users_cache (id, name, real_name, avatar_url)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                name = COALESCE(NULLIF(excluded.name, ''), slack_users_cache.name),
+                real_name = COALESCE(NULLIF(excluded.real_name, ''), slack_users_cache.real_name),
+                avatar_url = excluded.avatar_url",
+            params![user_id, final_name, final_real_name, avatar_url],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn update_message_avatars_by_ids(
+        &self,
+        ids: &[String],
+        avatar_url: &str,
+    ) -> Result<usize, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut updated = 0usize;
+        let mut stmt = tx
+            .prepare(
+                "UPDATE messages
+                 SET avatar_url = ?2
+                 WHERE source = 'slack'
+                   AND id = ?1
+                   AND (avatar_url IS NULL OR avatar_url = '')",
+            )
+            .map_err(|e| e.to_string())?;
+        for id in ids {
+            updated += stmt
+                .execute(params![id, avatar_url])
+                .map_err(|e| e.to_string())?;
+        }
+        drop(stmt);
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(updated)
+    }
+
     pub fn search_slack_users(&self, query: &str) -> Result<Vec<SlackUser>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let query_lower = query.to_lowercase();
         let pattern = format!("%{}%", query_lower);
         let mut stmt = conn
             .prepare(
-                "SELECT id, name, real_name FROM slack_users_cache
+                "SELECT id, name, real_name, avatar_url FROM slack_users_cache
                  WHERE LOWER(name) LIKE ?1 OR LOWER(real_name) LIKE ?1
                  ORDER BY
                    CASE WHEN LOWER(name) = ?2 OR LOWER(real_name) = ?2 THEN 0
@@ -711,6 +1125,7 @@ impl Database {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     real_name: row.get(2)?,
+                    avatar_url: row.get(3)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -760,17 +1175,21 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
         let sql = format!(
-            "SELECT id, name, real_name FROM slack_users_cache WHERE id IN ({})",
+            "SELECT id, name, real_name, avatar_url FROM slack_users_cache WHERE id IN ({})",
             placeholders.join(", ")
         );
         let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
         let rows = stmt
             .query_map(params.as_slice(), |row| {
                 Ok(SlackUser {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     real_name: row.get(2)?,
+                    avatar_url: row.get(3)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -823,11 +1242,98 @@ impl Database {
     pub fn slack_cache_count(&self) -> Result<SlackCacheStatus, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let user_count: usize = conn
-            .query_row("SELECT COUNT(*) FROM slack_users_cache", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM slack_users_cache", [], |row| {
+                row.get(0)
+            })
             .map_err(|e| e.to_string())?;
         let channel_count: usize = conn
-            .query_row("SELECT COUNT(*) FROM slack_channels_cache", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM slack_channels_cache", [], |row| {
+                row.get(0)
+            })
             .map_err(|e| e.to_string())?;
-        Ok(SlackCacheStatus { user_count, channel_count })
+        Ok(SlackCacheStatus {
+            user_count,
+            channel_count,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_message(
+        id: &str,
+        classification: &str,
+        status: &str,
+        body: &str,
+        starred: bool,
+        snoozed_until: Option<i64>,
+    ) -> Message {
+        Message {
+            id: id.to_string(),
+            source: "slack".to_string(),
+            sender: "alice".to_string(),
+            subject: Some("general".to_string()),
+            body: body.to_string(),
+            body_html: Some(body.to_string()),
+            permalink: Some(format!("https://example.com/{}", id)),
+            avatar_url: Some("https://example.com/avatar.png".to_string()),
+            timestamp: 1_700_000_000,
+            classification: classification.to_string(),
+            status: status.to_string(),
+            starred,
+            snoozed_until,
+            created_at: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn other_tab_includes_unclassified_and_counts_fold() {
+        let db = Database::new(":memory:").expect("db init");
+        let m1 = sample_message("m1", "other", "inbox", "hello", false, None);
+        let m2 = sample_message("m2", "unclassified", "inbox", "world", false, None);
+        db.upsert_messages_batch(&[m1, m2]).expect("insert");
+
+        let other = db.get_messages("other", "inbox").expect("load other");
+        assert_eq!(other.len(), 2);
+
+        let counts = db.get_message_counts("inbox").expect("counts");
+        assert_eq!(counts.counts.get("other"), Some(&2usize));
+        assert!(!counts.counts.contains_key("unclassified"));
+    }
+
+    #[test]
+    fn upsert_updates_mutable_fields_without_clobbering_triage() {
+        let db = Database::new(":memory:").expect("db init");
+
+        let original = sample_message(
+            "same-id",
+            "important",
+            "archived",
+            "old body",
+            true,
+            Some(1_700_001_000),
+        );
+        db.upsert_messages_batch(&[original]).expect("seed");
+
+        let mut updated =
+            sample_message("same-id", "unclassified", "inbox", "new body", false, None);
+        updated.avatar_url = None;
+        db.upsert_messages_batch(&[updated]).expect("upsert");
+
+        let rows = db
+            .get_messages_by_status("archived")
+            .expect("load archived rows");
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.body, "new body");
+        assert_eq!(row.classification, "important");
+        assert!(row.starred);
+        assert_eq!(row.snoozed_until, Some(1_700_001_000));
+        assert_eq!(
+            row.avatar_url.as_deref(),
+            Some("https://example.com/avatar.png")
+        );
     }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Settings as SettingsType,
   SlackFilter,
@@ -6,7 +6,6 @@ import {
   CategoryRule,
   getSettings,
   saveSettings,
-  refreshInbox,
   populateSlackCache,
 } from "../lib/tauri";
 import { applyTheme } from "../hooks/useMessages";
@@ -62,10 +61,11 @@ interface SettingsProps {
   onClose: () => void;
   onCategoriesChanged?: () => void;
   onMessagesChanged?: () => void;
+  onRequestRefresh?: () => Promise<void> | void;
   onRunSetup?: () => void;
 }
 
-export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRunSetup }: SettingsProps) {
+export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRequestRefresh, onRunSetup }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsType>({
     slack_token: null,
     slack_cookie: null,
@@ -78,6 +78,7 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
     font_size: null,
     open_in_slack_app: null,
     notifications_enabled: null,
+    beta_release_channel: null,
     after_archive: null,
   });
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
@@ -86,6 +87,13 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
   const [ruleInputs, setRuleInputs] = useState<Record<string, string>>({});
   const [refreshingCache, setRefreshingCache] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reclassifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reclassifyQueuedRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  const closingRef = useRef(false);
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const settingsRef = useRef(settings);
+  const loadedRef = useRef(loaded);
 
   const filters = settings.slack_filters ?? [];
   const categories = settings.categories ?? DEFAULT_CATEGORIES;
@@ -103,33 +111,139 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
     })();
   }, []);
 
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    loadedRef.current = loaded;
+  }, [loaded]);
+
   // Stable serialization for deep comparison
   const settingsKey = useMemo(() => JSON.stringify(settings), [settings]);
 
-  // Auto-save whenever settings change (after initial load)
-  useEffect(() => {
-    if (!loaded) return;
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(async () => {
+  const runReclassifyRefresh = useCallback(async () => {
+    reclassifyQueuedRef.current = false;
+    if (!onRequestRefresh) return;
+    await Promise.resolve(onRequestRefresh());
+  }, [onRequestRefresh]);
+
+  const scheduleReclassifyRefresh = useCallback(() => {
+    reclassifyQueuedRef.current = true;
+    if (reclassifyTimeoutRef.current) clearTimeout(reclassifyTimeoutRef.current);
+    reclassifyTimeoutRef.current = setTimeout(() => {
+      runReclassifyRefresh().catch(console.error);
+    }, 3500);
+  }, [runReclassifyRefresh]);
+
+  const persistSettings = useCallback(async (nextSettings: SettingsType, queueRefreshOnly: boolean) => {
+    if (!loadedRef.current) return;
+    if (saveInFlightRef.current) {
+      await saveInFlightRef.current;
+    }
+    const run = (async () => {
       try {
-        const result = await saveSettings(settings);
+        const result = await saveSettings(nextSettings);
         onCategoriesChanged?.();
         if (result.filters_cleaned) {
           onMessagesChanged?.();
         }
         if (result.classifications_reset) {
-          // Descriptions changed — auto-refresh to reclassify
-          refreshInbox().catch(console.error);
+          if (queueRefreshOnly) {
+            reclassifyQueuedRef.current = true;
+          } else {
+            scheduleReclassifyRefresh();
+          }
         }
       } catch (e) {
         console.error("Failed to save settings:", e);
       }
+    })();
+    saveInFlightRef.current = run;
+    try {
+      await run;
+    } finally {
+      if (saveInFlightRef.current === run) {
+        saveInFlightRef.current = null;
+      }
+    }
+  }, [onCategoriesChanged, onMessagesChanged, scheduleReclassifyRefresh]);
+
+  const flushPendingSave = useCallback(async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    if (pendingSaveRef.current) {
+      pendingSaveRef.current = false;
+      await persistSettings(settingsRef.current, true);
+    } else if (saveInFlightRef.current) {
+      await saveInFlightRef.current;
+    }
+  }, [persistSettings]);
+
+  const performClose = useCallback(async (afterClose?: () => void) => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    try {
+      await flushPendingSave();
+      if (reclassifyTimeoutRef.current) {
+        clearTimeout(reclassifyTimeoutRef.current);
+        reclassifyTimeoutRef.current = null;
+      }
+      if (reclassifyQueuedRef.current) {
+        await runReclassifyRefresh();
+      }
+    } catch (e) {
+      console.error("Failed to flush settings before close:", e);
+    } finally {
+      onClose();
+      afterClose?.();
+    }
+  }, [flushPendingSave, onClose, runReclassifyRefresh]);
+
+  const handleClose = useCallback(() => {
+    void performClose();
+  }, [performClose]);
+
+  const handleRunSetupClick = useCallback(() => {
+    if (!onRunSetup) return;
+    void performClose(onRunSetup);
+  }, [onRunSetup, performClose]);
+
+  useEffect(() => {
+    const closeEvent = "dispatch:close-settings";
+    const onCloseRequest = () => {
+      handleClose();
+    };
+    window.addEventListener(closeEvent, onCloseRequest);
+    return () => {
+      window.removeEventListener(closeEvent, onCloseRequest);
+    };
+  }, [handleClose]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (reclassifyTimeoutRef.current) clearTimeout(reclassifyTimeoutRef.current);
+    };
+  }, []);
+
+  // Auto-save whenever settings change (after initial load)
+  useEffect(() => {
+    if (!loaded) return;
+    pendingSaveRef.current = true;
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const nextSettings = settings;
+    saveTimeoutRef.current = setTimeout(() => {
+      pendingSaveRef.current = false;
+      void persistSettings(nextSettings, false);
     }, 300);
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsKey, loaded]);
+  }, [settingsKey, loaded, persistSettings]);
 
   // --- Filter management ---
   const addFilter = (item: TypeaheadItem) => {
@@ -284,13 +398,13 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
   };
 
   return (
-    <div className="settings-overlay" onClick={onClose}>
+    <div className="settings-overlay" onClick={handleClose}>
       <div
         className="settings-dialog"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="settings-titlebar" data-tauri-drag-region>
-          <button className="settings-close" onClick={onClose} title="Close" />
+          <button className="settings-close" onClick={handleClose} title="Close" />
           <span className="settings-titlebar-text">{TAB_LABELS[activeTab]}</span>
         </div>
 
@@ -398,6 +512,16 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
                   />
                   Desktop notifications for new &amp; snoozed messages
                 </label>
+                <label className="settings-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.beta_release_channel ?? false}
+                    onChange={(e) =>
+                      setSettings({ ...settings, beta_release_channel: e.target.checked })
+                    }
+                  />
+                  Get beta releases before production
+                </label>
               </div>
             </div>
 
@@ -496,7 +620,7 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRu
               <div className="settings-row-ia">
                 <span className="settings-row-label"></span>
                 <div className="settings-row-control" style={{ display: "flex", gap: 8 }}>
-                  <button className="setup-wizard-btn" onClick={onRunSetup}>
+                  <button className="setup-wizard-btn" onClick={handleRunSetupClick}>
                     Run Setup Wizard...
                   </button>
                   <button

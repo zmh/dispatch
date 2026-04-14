@@ -26,6 +26,8 @@ pub struct SlackUser {
     pub id: String,
     pub name: String,
     pub real_name: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +76,7 @@ pub struct Settings {
     pub font_size: Option<String>,
     pub open_in_slack_app: Option<bool>,
     pub notifications_enabled: Option<bool>,
+    pub beta_release_channel: Option<bool>,
     pub after_archive: Option<String>,
 }
 
@@ -91,6 +94,7 @@ impl Default for Settings {
             font_size: Some("s".to_string()),
             open_in_slack_app: Some(false),
             notifications_enabled: Some(true),
+            beta_release_channel: Some(false),
             after_archive: Some("newer".to_string()),
         }
     }
@@ -139,6 +143,18 @@ pub struct SaveSettingsResult {
 pub struct RefreshResult {
     pub new_messages: usize,
     pub classified: usize,
+    #[serde(default)]
+    pub pending_classification: usize,
+    #[serde(default)]
+    pub in_progress: bool,
+    #[serde(default)]
+    pub slack_fetch_ms: u64,
+    #[serde(default)]
+    pub db_write_ms: u64,
+    #[serde(default)]
+    pub classify_ms: u64,
+    #[serde(default)]
+    pub avatar_ms: u64,
     pub errors: Vec<String>,
 }
 

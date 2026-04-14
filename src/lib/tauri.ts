@@ -21,6 +21,7 @@ export interface SlackUser {
   id: string;
   name: string;
   real_name: string;
+  avatar_url?: string | null;
 }
 
 export interface SlackChannel {
@@ -61,12 +62,19 @@ export interface Settings {
   font_size: string | null;
   open_in_slack_app: boolean | null;
   notifications_enabled: boolean | null;
+  beta_release_channel: boolean | null;
   after_archive: string | null;
 }
 
 export interface RefreshResult {
   new_messages: number;
   classified: number;
+  pending_classification: number;
+  in_progress: boolean;
+  slack_fetch_ms: number;
+  db_write_ms: number;
+  classify_ms: number;
+  avatar_ms: number;
   errors: string[];
 }
 

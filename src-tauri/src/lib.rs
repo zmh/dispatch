@@ -12,10 +12,38 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 
+const BETA_UPDATE_ENDPOINT: &str =
+    "https://github.com/zmh/dispatch/releases/download/beta/latest.json";
+
+fn beta_release_channel_enabled(db: &storage::Database) -> bool {
+    db.get_setting("beta_release_channel")
+        .ok()
+        .flatten()
+        .map(|v| v == "true")
+        .unwrap_or(false)
+}
+
+fn updater_for_release_channel<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    use_beta_channel: bool,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    if !use_beta_channel {
+        return handle.updater().map_err(|e| e.to_string());
+    }
+
+    let endpoint = BETA_UPDATE_ENDPOINT
+        .parse()
+        .map_err(|e| format!("Invalid beta update endpoint: {}", e))?;
+    let builder = handle
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .map_err(|e| e.to_string())?;
+    builder.build().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let data_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let data_dir = dirs_next::data_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     let app_dir = data_dir.join("dispatch");
 
     // Migrate from old "haystack" data directory if it exists
@@ -34,8 +62,12 @@ pub fn run() {
         std::fs::rename(&old_db_path, &db_path)
             .expect("Failed to migrate haystack.db to dispatch.db");
     }
-    let db = storage::Database::new(db_path.to_str().expect("Database path contains invalid UTF-8"))
-        .expect("Failed to initialize database");
+    let db = storage::Database::new(
+        db_path
+            .to_str()
+            .expect("Database path contains invalid UTF-8"),
+    )
+    .expect("Failed to initialize database");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -44,6 +76,8 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState {
             db: Arc::new(db),
+            refresh_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            backlog_classify_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
         .setup(|app| {
             // App submenu
@@ -102,13 +136,15 @@ pub fn run() {
                     let _ = app_handle.emit("open-about", ());
                 } else if event.id() == "check_updates" {
                     let handle = app_handle.clone();
+                    let db = Arc::clone(&app_handle.state::<AppState>().db);
                     tauri::async_runtime::spawn(async move {
                         let _ = handle.emit("update-checking", ());
-                        let updater = match handle.updater() {
+                        let use_beta_channel = beta_release_channel_enabled(&db);
+                        let updater = match updater_for_release_channel(&handle, use_beta_channel) {
                             Ok(u) => u,
                             Err(e) => {
                                 eprintln!("Updater init failed: {}", e);
-                                let _ = handle.emit("update-error", e.to_string());
+                                let _ = handle.emit("update-error", e);
                                 return;
                             }
                         };
@@ -183,12 +219,18 @@ pub fn run() {
 
             // Background update checker: check 5s after startup, then every 24 hours
             let update_handle = app.handle().clone();
+            let update_db = Arc::clone(&app.state::<AppState>().db);
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 loop {
-                    let updater = match update_handle.updater() {
+                    let use_beta_channel = beta_release_channel_enabled(&update_db);
+                    let updater = match updater_for_release_channel(&update_handle, use_beta_channel) {
                         Ok(u) => u,
-                        Err(e) => { eprintln!("Updater init failed: {}", e); break; }
+                        Err(e) => {
+                            eprintln!("Updater init failed: {}", e);
+                            tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+                            continue;
+                        }
                     };
                     match updater.check().await {
                         Ok(Some(update)) => {

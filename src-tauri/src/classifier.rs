@@ -1,5 +1,6 @@
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::models::Message;
 
@@ -28,6 +29,7 @@ struct ClaudeContent {
 }
 
 const BATCH_SIZE: usize = 20;
+const CLASSIFIER_RETRIES: usize = 2;
 
 pub async fn classify_messages(
     api_key: &str,
@@ -55,17 +57,17 @@ async fn classify_batch(
     messages: &[Message],
     categories: &[String],
 ) -> Result<Vec<(String, String)>, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let mut headers = HeaderMap::new();
     headers.insert(
         "x-api-key",
         HeaderValue::from_str(api_key).map_err(|e| e.to_string())?,
     );
-    headers.insert(
-        "anthropic-version",
-        HeaderValue::from_static("2023-06-01"),
-    );
+    headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let category_list = categories.join(", ");
@@ -113,24 +115,49 @@ async fn classify_batch(
         }],
     };
 
-    let response = client
-        .post("https://api.anthropic.com/v1/messages")
-        .headers(headers)
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("Claude API request failed: {}", e))?;
+    let mut attempt = 0usize;
+    let claude_response: ClaudeResponse = loop {
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .headers(headers.clone())
+            .json(&request_body)
+            .send()
+            .await;
 
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("Claude API error ({}): {}", status, body));
-    }
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                if (status.as_u16() == 429 || status.is_server_error())
+                    && attempt < CLASSIFIER_RETRIES
+                {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(format!("Claude API error ({}): {}", status, body));
+                }
 
-    let claude_response: ClaudeResponse = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Claude response: {}", e))?;
+                let parsed: ClaudeResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Failed to parse Claude response: {}", e))?;
+                break parsed;
+            }
+            Err(e) => {
+                let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                if retryable && attempt < CLASSIFIER_RETRIES {
+                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("Claude API request failed: {}", e));
+            }
+        }
+    };
 
     let text = claude_response
         .content
@@ -172,12 +199,10 @@ fn parse_classifications(
                 })
                 .collect())
         }
-        Err(e) => {
-            Err(format!(
-                "Failed to parse classifier response ({}). Raw: {}",
-                e,
-                &text[..text.len().min(200)]
-            ))
-        }
+        Err(e) => Err(format!(
+            "Failed to parse classifier response ({}). Raw: {}",
+            e,
+            &text[..text.len().min(200)]
+        )),
     }
 }
