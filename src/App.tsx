@@ -37,9 +37,7 @@ function App() {
     clearSelection,
     selectAll,
     doRefresh,
-    doMarkDone,
     doMarkDoneMany,
-    doSnooze,
     doSnoozeMany,
     doStar,
     doStarMany,
@@ -191,7 +189,6 @@ function App() {
     switchTab,
     cycleTab,
     cyclePrevTab,
-    doMarkDone,
     doMarkDoneMany,
     doStar,
     doStarMany,
@@ -203,11 +200,11 @@ function App() {
   const selectedMessage = messages[selectedIndex];
 
   const handleSnooze = async (until: number) => {
-    if (selectedIds.size > 0) {
-      await doSnoozeMany(Array.from(selectedIds), until);
-      setShowSnooze(false);
-    } else if (selectedMessage) {
-      await doSnooze(selectedMessage.id, until);
+    const ids = selectedIds.size > 0
+      ? Array.from(selectedIds)
+      : selectedMessage ? [selectedMessage.id] : [];
+    if (ids.length > 0) {
+      await doSnoozeMany(ids, until);
       setShowSnooze(false);
     }
   };

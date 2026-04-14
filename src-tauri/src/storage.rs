@@ -469,6 +469,7 @@ impl Database {
             font_size: self.get_setting("font_size")?.or_else(|| Some("s".to_string())),
             open_in_slack_app: self.get_setting("open_in_slack_app")?.map(|v| v == "true").or(Some(false)),
             notifications_enabled: self.get_setting("notifications_enabled")?.map(|v| v == "true").or(Some(true)),
+            after_archive: self.get_setting("after_archive")?.or_else(|| Some("newer".to_string())),
         })
     }
 
@@ -579,6 +580,9 @@ impl Database {
         }
         if let Some(val) = settings.notifications_enabled {
             self.set_setting("notifications_enabled", if val { "true" } else { "false" })?;
+        }
+        if let Some(ref val) = settings.after_archive {
+            self.set_setting("after_archive", val)?;
         }
 
         Ok(SaveSettingsResult {
