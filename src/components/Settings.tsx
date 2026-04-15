@@ -2,11 +2,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import {
   Settings as SettingsType,
   CodexStatus,
+  DiagnosticLogEntry,
   SlackFilter,
   Category,
   CategoryRule,
   getSettings,
   getCodexStatus,
+  getDiagnosticLogs,
+  clearDiagnosticLogs,
   saveSettings,
   populateSlackCache,
 } from "../lib/tauri";
@@ -23,16 +26,17 @@ const DEFAULT_CATEGORIES: Category[] = [
   { name: "other", builtin: true, position: 1 },
 ];
 
-type SettingsTab = "general" | "accounts" | "watchlist" | "inboxes";
+type SettingsTab = "general" | "accounts" | "watchlist" | "inboxes" | "logs";
 
 const TAB_LABELS: Record<SettingsTab, string> = {
   general: "General",
   accounts: "Accounts",
   watchlist: "Watch List",
   inboxes: "Inboxes",
+  logs: "Logs",
 };
 
-const SETTINGS_TABS: SettingsTab[] = ["general", "accounts", "watchlist", "inboxes"];
+const SETTINGS_TABS: SettingsTab[] = ["general", "accounts", "watchlist", "inboxes", "logs"];
 
 const TAB_ICONS: Record<SettingsTab, React.ReactElement> = {
   general: (
@@ -56,6 +60,16 @@ const TAB_ICONS: Record<SettingsTab, React.ReactElement> = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
       <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+    </svg>
+  ),
+  logs: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 6h13" />
+      <path d="M8 12h13" />
+      <path d="M8 18h13" />
+      <circle cx="3" cy="6" r="1.5" />
+      <circle cx="3" cy="12" r="1.5" />
+      <circle cx="3" cy="18" r="1.5" />
     </svg>
   ),
 };
@@ -94,6 +108,10 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const [refreshCacheError, setRefreshCacheError] = useState<string | null>(null);
   const [loadingCodexStatus, setLoadingCodexStatus] = useState(false);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [logs, setLogs] = useState<DiagnosticLogEntry[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [logsScope, setLogsScope] = useState<"all" | "categorization" | "refresh">("all");
   const {
     elapsedSeconds: cacheRefreshElapsedSeconds,
     isSlow: cacheRefreshIsSlow,
@@ -151,10 +169,41 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
     }
   }, []);
 
+  const refreshLogs = useCallback(async (scope: "all" | "categorization" | "refresh" = logsScope) => {
+    setLoadingLogs(true);
+    setLogsError(null);
+    try {
+      const entries = await getDiagnosticLogs(200, scope === "all" ? undefined : scope);
+      setLogs(entries);
+    } catch (e) {
+      console.error("Failed to load diagnostic logs:", e);
+      setLogsError("Could not load logs.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [logsScope]);
+
+  const handleClearLogs = useCallback(async () => {
+    if (!window.confirm("Clear all diagnostic logs?")) return;
+    try {
+      await clearDiagnosticLogs();
+      setLogs([]);
+      setLogsError(null);
+    } catch (e) {
+      console.error("Failed to clear diagnostic logs:", e);
+      setLogsError("Could not clear logs.");
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab !== "accounts") return;
     void refreshCodexStatus();
   }, [activeTab, refreshCodexStatus]);
+
+  useEffect(() => {
+    if (activeTab !== "logs") return;
+    void refreshLogs(logsScope);
+  }, [activeTab, logsScope, refreshLogs]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -440,6 +489,25 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const setFontSize = (font_size: string) => {
     setSettings({ ...settings, font_size });
     applyTheme(currentTheme, currentFont, font_size);
+  };
+
+  const formatLogTime = (ts: number) =>
+    new Date(ts * 1000).toLocaleString(undefined, {
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+  const formatLogMetadata = (metadata: Record<string, unknown>) => {
+    const entries = Object.entries(metadata);
+    if (entries.length === 0) return "";
+    return entries
+      .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+      .join(" · ");
   };
 
   return (
@@ -946,6 +1014,87 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
               <div className="settings-hint-text">
                 Rules auto-sort messages by keyword, sender, or channel. AI uses descriptions for everything else.
               </div>
+            </div>
+          </div>
+          )}
+
+          {/* Logs tab */}
+          {activeTab === "logs" && (
+          <div className="settings-section">
+            <div className="settings-section-desc">
+              Diagnostics for refresh and categorization flow (sensitive details are redacted).
+            </div>
+            <div className="settings-section-body">
+              <div className="settings-hint-text">
+                To verify Codex categorization is working: confirm <code>codex_status_checked</code>, then a
+                <code>classify_started</code> and <code>classify_completed</code> sequence where
+                <code>classified_count</code> &gt; 0 or <code>pending_after</code> is lower than
+                <code>pending_before</code>.
+              </div>
+
+              <div className="logs-toolbar">
+                <label className="settings-checkbox-label logs-scope-picker">
+                  Scope:
+                  <select
+                    className="settings-input logs-scope-select"
+                    value={logsScope}
+                    onChange={(e) => setLogsScope(e.target.value as "all" | "categorization" | "refresh")}
+                  >
+                    <option value="all">All</option>
+                    <option value="categorization">Categorization</option>
+                    <option value="refresh">Refresh</option>
+                  </select>
+                </label>
+                <button className="setup-wizard-btn" onClick={() => void refreshLogs(logsScope)} disabled={loadingLogs}>
+                  {loadingLogs ? "Refreshing..." : "Refresh"}
+                </button>
+                <button className="setup-wizard-btn" onClick={() => void handleClearLogs()} disabled={loadingLogs || logs.length === 0}>
+                  Clear Logs
+                </button>
+              </div>
+
+              {logsError && (
+                <div className="settings-loading-error">{logsError}</div>
+              )}
+
+              {!logsError && logs.length === 0 && !loadingLogs && (
+                <div className="logs-empty">No logs yet.</div>
+              )}
+
+              {logs.length > 0 && (
+                <div className="logs-list">
+                  {logs.map((log) => {
+                    const metadata =
+                      log.metadata && typeof log.metadata === "object"
+                        ? (log.metadata as Record<string, unknown>)
+                        : {};
+                    const metadataText = formatLogMetadata(metadata);
+
+                    return (
+                      <div key={log.id} className="log-item">
+                        <div className="log-item-head">
+                          <span className={`log-level log-level-${log.level}`}>{log.level.toUpperCase()}</span>
+                          <span className="log-scope">{log.scope}</span>
+                          <span className="log-event">{log.event}</span>
+                          {log.run_id && (
+                            <span className="log-run-id" title={log.run_id}>
+                              {log.run_id}
+                            </span>
+                          )}
+                          <span className="log-time">{formatLogTime(log.ts)}</span>
+                        </div>
+                        <div className="log-message">{log.message}</div>
+                        {metadataText && (
+                          <div className="log-meta">{metadataText}</div>
+                        )}
+                        {log.suppressed_count > 0 && (
+                          <div className="log-suppressed">Suppressed duplicates: {log.suppressed_count}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
           )}

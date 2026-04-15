@@ -147,6 +147,29 @@ export async function getCodexStatus(): Promise<CodexStatus> {
   return invoke("get_codex_status");
 }
 
+export interface DiagnosticLogEntry {
+  id: number;
+  ts: number;
+  run_id: string | null;
+  scope: "refresh" | "categorization" | string;
+  level: "info" | "warn" | "error" | string;
+  event: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  suppressed_count: number;
+}
+
+export async function getDiagnosticLogs(
+  limit: number = 200,
+  scope?: "refresh" | "categorization"
+): Promise<DiagnosticLogEntry[]> {
+  return invoke("get_diagnostic_logs", { limit, scope });
+}
+
+export async function clearDiagnosticLogs(): Promise<void> {
+  return invoke("clear_diagnostic_logs");
+}
+
 export interface SaveSettingsResult {
   classifications_reset: boolean;
   filters_cleaned: boolean;

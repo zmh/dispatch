@@ -1,5 +1,6 @@
 mod classifier;
 mod commands;
+mod diagnostics;
 mod models;
 mod slack;
 mod storage;
@@ -274,6 +275,8 @@ pub fn run() {
             commands::open_link,
             commands::get_settings,
             commands::get_codex_status,
+            commands::get_diagnostic_logs,
+            commands::clear_diagnostic_logs,
             commands::save_settings,
             commands::populate_slack_cache,
             commands::search_slack_users,

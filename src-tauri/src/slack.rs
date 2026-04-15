@@ -1,4 +1,4 @@
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, COOKIE, RETRY_AFTER};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -76,8 +76,10 @@ struct SlackMatch {
 #[derive(Debug, Deserialize)]
 struct SlackChannelInfo {
     name: Option<String>,
-    #[allow(dead_code)]
     id: Option<String>,
+    is_im: Option<bool>,
+    is_mpim: Option<bool>,
+    is_private: Option<bool>,
 }
 
 // (User search uses serde_json::Value for flexible response parsing)
@@ -86,10 +88,8 @@ struct SlackChannelInfo {
 
 #[derive(Debug, Deserialize)]
 struct UsersListResponse {
-    ok: bool,
     members: Option<Vec<UserMember>>,
     response_metadata: Option<ResponseMetadata>,
-    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,10 +112,8 @@ struct UserProfile {
 
 #[derive(Debug, Deserialize)]
 struct ConversationsListResponse {
-    ok: bool,
     channels: Option<Vec<ConversationChannel>>,
     response_metadata: Option<ResponseMetadata>,
-    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,9 +135,7 @@ struct ImConversation {
 
 #[derive(Debug, Deserialize)]
 struct ImConversationsListResponse {
-    ok: bool,
     channels: Option<Vec<ImConversation>>,
-    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -408,6 +404,119 @@ fn build_http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+fn retry_after_delay_ms(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|secs| secs.saturating_mul(1000))
+}
+
+fn retry_delay_ms(attempt: usize, retry_after_ms: Option<u64>) -> u64 {
+    let exponential = 500u64.saturating_mul(1u64 << attempt.min(6));
+    retry_after_ms.unwrap_or(exponential).max(exponential)
+}
+
+fn preview_text(text: &str, max_chars: usize) -> &str {
+    if text.len() > max_chars {
+        &text[..max_chars]
+    } else {
+        text
+    }
+}
+
+async fn post_slack_form_with_retry(
+    client: &reqwest::Client,
+    headers: &HeaderMap,
+    endpoint: &str,
+    form_params: &[(&str, String)],
+    context: &str,
+    max_retries: usize,
+) -> Result<serde_json::Value, String> {
+    let mut attempt = 0usize;
+    loop {
+        let response = client
+            .post(endpoint)
+            .headers(headers.clone())
+            .form(form_params)
+            .send()
+            .await;
+
+        match response {
+            Ok(resp) => {
+                let status = resp.status();
+                let retry_after_ms = retry_after_delay_ms(resp.headers());
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("Failed to read {} response: {}", context, e))?;
+
+                if (status.as_u16() == 429 || status.is_server_error()) && attempt < max_retries {
+                    let delay_ms = retry_delay_ms(attempt, retry_after_ms);
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                if !status.is_success() {
+                    return Err(format!(
+                        "Slack {} HTTP {}: {}",
+                        context,
+                        status.as_u16(),
+                        preview_text(&text, 300)
+                    ));
+                }
+
+                let raw: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+                    format!(
+                        "Failed to parse {} JSON: {} — response: {}",
+                        context,
+                        e,
+                        preview_text(&text, 300)
+                    )
+                })?;
+                if !raw.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    let err = raw
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    if err == "ratelimited" && attempt < max_retries {
+                        let delay_ms = retry_delay_ms(attempt, retry_after_ms);
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(format!("Slack {} error: {}", context, err));
+                }
+
+                return Ok(raw);
+            }
+            Err(e) => {
+                let retryable = e.is_timeout() || e.is_connect() || e.is_request();
+                if retryable && attempt < max_retries {
+                    let delay_ms = retry_delay_ms(attempt, None);
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("Slack {} request failed: {}", context, e));
+            }
+        }
+    }
+}
+
+fn is_dm_like_channel(info: &SlackChannelInfo) -> bool {
+    if info.is_im.unwrap_or(false) || info.is_mpim.unwrap_or(false) {
+        return true;
+    }
+    let Some(name) = info.name.as_deref() else {
+        return true;
+    };
+    if name.starts_with("mpdm-") {
+        return true;
+    }
+    name.len() >= 9 && name.starts_with('U') && name.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 async fn fetch_search_page_with_retry(
     client: &reqwest::Client,
     headers: &HeaderMap,
@@ -434,27 +543,23 @@ async fn fetch_search_page_with_retry(
         match response {
             Ok(resp) => {
                 let status = resp.status();
+                let retry_after_ms = retry_after_delay_ms(resp.headers());
                 let text = resp
                     .text()
                     .await
                     .map_err(|e| format!("Slack response read failed: {}", e))?;
 
                 if (status.as_u16() == 429 || status.is_server_error()) && attempt < max_retries {
-                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    let delay_ms = retry_delay_ms(attempt, retry_after_ms);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     attempt += 1;
                     continue;
                 }
                 if !status.is_success() {
-                    let preview = if text.len() > 300 {
-                        &text[..300]
-                    } else {
-                        &text
-                    };
                     return Err(format!(
                         "Slack search.messages HTTP {}: {}",
                         status.as_u16(),
-                        preview
+                        preview_text(&text, 300)
                     ));
                 }
 
@@ -462,7 +567,7 @@ async fn fetch_search_page_with_retry(
                     .map_err(|e| format!("Failed to parse Slack response: {}", e))?;
                 if !data.ok && data.error.as_deref() == Some("ratelimited") && attempt < max_retries
                 {
-                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    let delay_ms = retry_delay_ms(attempt, retry_after_ms);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     attempt += 1;
                     continue;
@@ -472,7 +577,7 @@ async fn fetch_search_page_with_retry(
             Err(e) => {
                 let retryable = e.is_timeout() || e.is_connect() || e.is_request();
                 if retryable && attempt < max_retries {
-                    let delay_ms = 250u64.saturating_mul(1u64 << attempt.min(4));
+                    let delay_ms = retry_delay_ms(attempt, None);
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     attempt += 1;
                     continue;
@@ -481,6 +586,88 @@ async fn fetch_search_page_with_retry(
             }
         }
     }
+}
+
+pub async fn fetch_recent_to_me_channels(
+    token: &str,
+    cookie: &str,
+    limit: usize,
+    max_pages: u32,
+    max_retries: usize,
+) -> Result<Vec<SlackChannel>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let client = build_http_client()?;
+    let headers = build_headers(token, cookie)?;
+    let thirty_days_ago = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("System time error: {}", e))?
+        .as_secs()
+        - (30 * 86400);
+    let cutoff_date = {
+        let days_since_epoch = thirty_days_ago / 86400;
+        let (y, m, d) = days_to_ymd(days_since_epoch);
+        format!("{}-{:02}-{:02}", y, m, d)
+    };
+    let query = format!("to:me after:{}", cutoff_date);
+
+    let mut channels = Vec::new();
+    let mut seen_ids = HashSet::new();
+    let mut page = 1u32;
+    let max_pages = max_pages.max(1);
+
+    while page <= max_pages && channels.len() < limit {
+        let data =
+            fetch_search_page_with_retry(&client, &headers, &query, page, max_retries).await?;
+        if !data.ok {
+            return Err(format!(
+                "Slack search.messages error: {} (query=\"{}\", page={})",
+                data.error.unwrap_or_else(|| "unknown".to_string()),
+                normalize_query_for_sync(&query),
+                page
+            ));
+        }
+
+        let slack_messages = match data.messages {
+            Some(m) => m,
+            None => break,
+        };
+        let total_pages = slack_messages.paging.as_ref().map(|p| p.pages).unwrap_or(1);
+
+        for m in slack_messages.matches {
+            if is_dm_like_channel(&m.channel) {
+                continue;
+            }
+            let Some(channel_id) = m.channel.id.clone() else {
+                continue;
+            };
+            if !seen_ids.insert(channel_id.clone()) {
+                continue;
+            }
+            let Some(channel_name) = m.channel.name.clone() else {
+                continue;
+            };
+            let ts = m.ts.parse::<f64>().unwrap_or(0.0);
+            channels.push(SlackChannel {
+                id: channel_id,
+                name: channel_name,
+                is_private: m.channel.is_private.unwrap_or(false),
+                updated: ts,
+            });
+            if channels.len() >= limit {
+                break;
+            }
+        }
+
+        if page >= total_pages {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(channels)
 }
 
 async fn fetch_user_info_with_retry(
@@ -1184,6 +1371,7 @@ pub async fn get_team_id(token: &str, cookie: &str) -> Result<String, String> {
 pub async fn fetch_slack_channels_paged<F>(
     token: &str,
     cookie: &str,
+    max_retries: usize,
     mut on_page: F,
 ) -> Result<usize, String>
 where
@@ -1207,37 +1395,17 @@ where
             form_params.push(("cursor", cursor.clone()));
         }
 
-        let response = client
-            .post("https://slack.com/api/conversations.list")
-            .headers(headers.clone())
-            .form(&form_params)
-            .send()
-            .await
-            .map_err(|e| format!("Slack conversations.list failed: {}", e))?;
-
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read conversations.list response: {}", e))?;
-
-        let data: ConversationsListResponse = serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 300 {
-                &text[..300]
-            } else {
-                &text
-            };
-            format!(
-                "Failed to parse conversations.list: {} — response: {}",
-                e, preview
-            )
-        })?;
-
-        if !data.ok {
-            return Err(format!(
-                "Slack conversations.list error: {}",
-                data.error.unwrap_or_else(|| "unknown".to_string())
-            ));
-        }
+        let raw = post_slack_form_with_retry(
+            &client,
+            &headers,
+            "https://slack.com/api/conversations.list",
+            &form_params,
+            "conversations.list",
+            max_retries,
+        )
+        .await?;
+        let data: ConversationsListResponse = serde_json::from_value(raw)
+            .map_err(|e| format!("Failed to parse conversations.list: {}", e))?;
 
         if let Some(channels) = data.channels {
             let mut page_channels = Vec::new();
@@ -1274,6 +1442,7 @@ where
 pub async fn fetch_slack_users_paged<F>(
     token: &str,
     cookie: &str,
+    max_retries: usize,
     mut on_page: F,
 ) -> Result<usize, String>
 where
@@ -1292,34 +1461,17 @@ where
             form_params.push(("cursor", cursor.clone()));
         }
 
-        let response = client
-            .post("https://slack.com/api/users.list")
-            .headers(headers.clone())
-            .form(&form_params)
-            .send()
-            .await
-            .map_err(|e| format!("Slack users.list failed: {}", e))?;
-
-        let text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read users.list response: {}", e))?;
-
-        let data: UsersListResponse = serde_json::from_str(&text).map_err(|e| {
-            let preview = if text.len() > 300 {
-                &text[..300]
-            } else {
-                &text
-            };
-            format!("Failed to parse users.list: {} — response: {}", e, preview)
-        })?;
-
-        if !data.ok {
-            return Err(format!(
-                "Slack users.list error: {}",
-                data.error.unwrap_or_else(|| "unknown".to_string())
-            ));
-        }
+        let raw = post_slack_form_with_retry(
+            &client,
+            &headers,
+            "https://slack.com/api/users.list",
+            &form_params,
+            "users.list",
+            max_retries,
+        )
+        .await?;
+        let data: UsersListResponse = serde_json::from_value(raw)
+            .map_err(|e| format!("Failed to parse users.list: {}", e))?;
 
         if let Some(members) = data.members {
             let mut page_users = Vec::new();
@@ -1367,6 +1519,7 @@ pub async fn fetch_recent_dm_user_ids(
     token: &str,
     cookie: &str,
     limit: usize,
+    max_retries: usize,
 ) -> Result<Vec<String>, String> {
     let client = reqwest::Client::new();
     let headers = build_cookie_header(cookie)?;
@@ -1378,37 +1531,17 @@ pub async fn fetch_recent_dm_user_ids(
         ("exclude_archived", "true".to_string()),
     ];
 
-    let response = client
-        .post("https://slack.com/api/conversations.list")
-        .headers(headers)
-        .form(&form_params)
-        .send()
-        .await
-        .map_err(|e| format!("Slack conversations.list (im) failed: {}", e))?;
-
-    let text = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read conversations.list (im) response: {}", e))?;
-
-    let data: ImConversationsListResponse = serde_json::from_str(&text).map_err(|e| {
-        let preview = if text.len() > 300 {
-            &text[..300]
-        } else {
-            &text
-        };
-        format!(
-            "Failed to parse conversations.list (im): {} — response: {}",
-            e, preview
-        )
-    })?;
-
-    if !data.ok {
-        return Err(format!(
-            "Slack conversations.list (im) error: {}",
-            data.error.unwrap_or_else(|| "unknown".to_string())
-        ));
-    }
+    let raw = post_slack_form_with_retry(
+        &client,
+        &headers,
+        "https://slack.com/api/conversations.list",
+        &form_params,
+        "conversations.list (im)",
+        max_retries,
+    )
+    .await?;
+    let data: ImConversationsListResponse = serde_json::from_value(raw)
+        .map_err(|e| format!("Failed to parse conversations.list (im): {}", e))?;
 
     let user_ids: Vec<String> = data
         .channels

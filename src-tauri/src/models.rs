@@ -198,3 +198,18 @@ pub struct CodexStatus {
     pub has_codex_subscription: bool,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticLogEntry {
+    pub id: i64,
+    pub ts: i64,
+    pub run_id: Option<String>,
+    pub scope: String,
+    pub level: String,
+    pub event: String,
+    pub message: String,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub suppressed_count: usize,
+}
