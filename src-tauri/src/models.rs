@@ -153,6 +153,8 @@ pub struct RefreshResult {
     #[serde(default)]
     pub in_progress: bool,
     #[serde(default)]
+    pub progress_percent: u8,
+    #[serde(default)]
     pub slack_fetch_ms: u64,
     #[serde(default)]
     pub db_write_ms: u64,

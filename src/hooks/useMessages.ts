@@ -18,7 +18,6 @@ import {
   RefreshResult,
   setWindowTheme,
 } from "../lib/tauri";
-import { useLoadingTimer } from "./useLoadingTimer";
 
 const STARRED_CATEGORY: Category = { name: "starred", builtin: true, position: 0.5 };
 
@@ -70,11 +69,9 @@ export function useMessages() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
-  const {
-    elapsedSeconds: refreshElapsedSeconds,
-    isSlow: refreshIsSlow,
-  } = useLoadingTimer(refreshing);
+  const [refreshProgressPercent, setRefreshProgressPercent] = useState(0);
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const refreshStatusPollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const afterArchiveRef = useRef<string>("newer");
   const pendingCursorTarget = useRef<string | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
@@ -152,16 +149,53 @@ export function useMessages() {
 
     const run = (async () => {
       setRefreshing(true);
+      setRefreshProgressPercent(1);
+
       try {
-        let result = await refreshInbox();
+        const activeRefresh = refreshInbox(true);
+        const pollRefreshStatus = async () => {
+          try {
+            const status = await refreshInbox(false);
+            if (!status.in_progress) {
+              return;
+            }
+            setRefreshProgressPercent((prev) =>
+              Math.max(prev, Math.min(99, Math.max(1, status.progress_percent || 0)))
+            );
+          } catch {
+            // Ignore polling failures during an active refresh.
+          }
+        };
+
+        if (refreshStatusPollInterval.current) {
+          clearInterval(refreshStatusPollInterval.current);
+        }
+        refreshStatusPollInterval.current = setInterval(() => {
+          void pollRefreshStatus();
+        }, 800);
+        void pollRefreshStatus();
+
+        let result = await activeRefresh;
         setLastRefreshResult(result);
+        setRefreshProgressPercent((prev) =>
+          Math.max(
+            prev,
+            Math.min(result.in_progress ? 99 : 100, Math.max(1, result.progress_percent || 0))
+          )
+        );
 
         while (result.in_progress) {
           await new Promise<void>((resolve) => {
             setTimeout(resolve, 1000);
           });
-          result = await refreshInbox();
+          result = await refreshInbox(false);
           setLastRefreshResult(result);
+          setRefreshProgressPercent((prev) =>
+            Math.max(
+              prev,
+              Math.min(result.in_progress ? 99 : 100, Math.max(1, result.progress_percent || 0))
+            )
+          );
         }
 
         await fetchMessages();
@@ -173,6 +207,7 @@ export function useMessages() {
           classified: 0,
           pending_classification: 0,
           in_progress: false,
+          progress_percent: 0,
           slack_fetch_ms: 0,
           db_write_ms: 0,
           classify_ms: 0,
@@ -180,6 +215,11 @@ export function useMessages() {
           errors: [`Refresh failed.${reason}`],
         });
       } finally {
+        if (refreshStatusPollInterval.current) {
+          clearInterval(refreshStatusPollInterval.current);
+          refreshStatusPollInterval.current = null;
+        }
+        setRefreshProgressPercent(0);
         setRefreshing(false);
         refreshPromiseRef.current = null;
       }
@@ -397,6 +437,10 @@ export function useMessages() {
     }, 5 * 60 * 1000);
     return () => {
       if (refreshInterval.current) clearInterval(refreshInterval.current);
+      if (refreshStatusPollInterval.current) {
+        clearInterval(refreshStatusPollInterval.current);
+        refreshStatusPollInterval.current = null;
+      }
     };
   }, [doRefresh]);
 
@@ -445,8 +489,7 @@ export function useMessages() {
     selectionAnchor,
     loading,
     refreshing,
-    refreshElapsedSeconds,
-    refreshIsSlow,
+    refreshProgressPercent,
     lastRefreshResult,
     setSelectedIndex,
     setSelectionAnchor,

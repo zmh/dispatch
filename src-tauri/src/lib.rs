@@ -77,6 +77,19 @@ pub fn run() {
         .manage(AppState {
             db: Arc::new(db),
             refresh_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            refresh_progress_percent: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            last_refresh_result: Arc::new(tokio::sync::RwLock::new(models::RefreshResult {
+                new_messages: 0,
+                classified: 0,
+                pending_classification: 0,
+                in_progress: false,
+                progress_percent: 0,
+                slack_fetch_ms: 0,
+                db_write_ms: 0,
+                classify_ms: 0,
+                avatar_ms: 0,
+                errors: vec![],
+            })),
             backlog_classify_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
         .setup(|app| {

@@ -6,8 +6,7 @@ interface InboxTabsProps {
   counts: MessageCounts;
   categories: Category[];
   refreshing: boolean;
-  refreshElapsedSeconds: number;
-  refreshIsSlow: boolean;
+  refreshProgressPercent: number;
   onSwitchTab: (tab: string) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
@@ -20,8 +19,7 @@ export function InboxTabs({
   counts,
   categories,
   refreshing,
-  refreshElapsedSeconds,
-  refreshIsSlow,
+  refreshProgressPercent,
   onSwitchTab,
   onRefresh,
   onOpenSettings,
@@ -109,7 +107,7 @@ export function InboxTabs({
           </svg>
           <span className="loading-fixed-label loading-fixed-label-refresh">
             {refreshing
-              ? `Refreshing... ${refreshElapsedSeconds}s${refreshIsSlow ? " · slow" : ""}`
+              ? `Refreshing ${Math.max(1, Math.min(100, refreshProgressPercent))}%`
               : "Refresh"}
           </span>
         </button>

@@ -74,6 +74,7 @@ export interface RefreshResult {
   classified: number;
   pending_classification: number;
   in_progress: boolean;
+  progress_percent: number;
   slack_fetch_ms: number;
   db_write_ms: number;
   classify_ms: number;
@@ -106,8 +107,8 @@ export async function getMessageCounts(status: string = "inbox"): Promise<Messag
   return invoke("get_message_counts", { status });
 }
 
-export async function refreshInbox(): Promise<RefreshResult> {
-  return invoke("refresh_inbox");
+export async function refreshInbox(startIfIdle: boolean = true): Promise<RefreshResult> {
+  return invoke("refresh_inbox", { startIfIdle });
 }
 
 export async function markDoneMessage(id: string): Promise<void> {

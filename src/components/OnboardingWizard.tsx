@@ -101,28 +101,51 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
     setWorkspaceLoadError(null);
     setWorkspaceLoadPhase("loading_cache");
 
+    let cacheFailed = false;
     try {
       await populateSlackCache();
-      if (workspaceLoadSeqRef.current !== loadSeq) return;
+    } catch (cacheError) {
+      console.error("Workspace cache preload failed:", cacheError);
+      cacheFailed = true;
+    }
+    if (workspaceLoadSeqRef.current !== loadSeq) return;
 
-      setWorkspaceLoadPhase("loading_suggestions");
-      try {
-        const suggestions = await getOnboardingSuggestions();
-        if (workspaceLoadSeqRef.current !== loadSeq) return;
-        applyWorkspaceSuggestions(suggestions.suggested_people, suggestions.suggested_channels);
-        setWorkspaceLoadPhase("ready");
-      } catch (suggestionsError) {
-        console.error("Failed to load onboarding suggestions:", suggestionsError);
-        const channels = await searchSlackChannels("");
-        if (workspaceLoadSeqRef.current !== loadSeq) return;
-        applyWorkspaceSuggestions([], channels);
-        setWorkspaceLoadPhase("ready");
-      }
-    } catch (e) {
+    setWorkspaceLoadPhase("loading_suggestions");
+
+    let people: SlackUser[] = [];
+    let channels: SlackChannel[] = [];
+    let suggestionsLoaded = false;
+
+    try {
+      const suggestions = await getOnboardingSuggestions();
       if (workspaceLoadSeqRef.current !== loadSeq) return;
-      console.error("Workspace load failed:", e);
-      setWorkspaceLoadError("Couldn't load your workspace data.");
-      setWorkspaceLoadPhase("error");
+      people = suggestions.suggested_people;
+      channels = suggestions.suggested_channels;
+      suggestionsLoaded = true;
+    } catch (suggestionsError) {
+      console.error("Failed to load onboarding suggestions:", suggestionsError);
+    }
+
+    if (!suggestionsLoaded || channels.length === 0) {
+      try {
+        const liveChannels = await searchSlackChannels("");
+        if (workspaceLoadSeqRef.current !== loadSeq) return;
+        if (channels.length === 0) {
+          channels = liveChannels;
+        }
+      } catch (searchError) {
+        console.error("Fallback workspace channel search failed:", searchError);
+      }
+    }
+
+    if (workspaceLoadSeqRef.current !== loadSeq) return;
+    applyWorkspaceSuggestions(people, channels);
+    setWorkspaceLoadPhase("ready");
+
+    if (cacheFailed) {
+      setWorkspaceLoadError("Workspace preload was partial. You can still search manually, or retry.");
+    } else {
+      setWorkspaceLoadError(null);
     }
   }, [applyWorkspaceSuggestions, slackCookie, slackToken]);
 
@@ -515,18 +538,24 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
                     {workspaceLoadError || "Couldn't load your workspace data."}
                   </span>
                 )}
-                {(workspaceLoadPhase === "error" || (workspaceIsLoading && workspaceLoadIsSlow)) && (
+                {workspaceLoadPhase !== "error" && !workspaceIsLoading && workspaceLoadError && (
+                  <span className="onboarding-loading onboarding-loading-note">
+                    {workspaceLoadError}
+                  </span>
+                )}
+                {(workspaceLoadPhase === "error" || workspaceLoadError || (workspaceIsLoading && workspaceLoadIsSlow)) && (
                   <button
                     type="button"
                     className="onboarding-loading-action"
                     onClick={() => {
+                      setWorkspaceLoadError(null);
                       void loadWorkspaceData();
                     }}
                   >
                     Retry workspace load
                   </button>
                 )}
-                {!workspaceIsLoading && workspaceLoadPhase !== "error" && (
+                {!workspaceIsLoading && workspaceLoadPhase !== "error" && !workspaceLoadError && (
                   <span className="onboarding-loading-placeholder">&nbsp;</span>
                 )}
               </div>

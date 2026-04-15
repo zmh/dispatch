@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{Emitter, State};
 use tauri_plugin_notification::NotificationExt;
+use tokio::sync::RwLock;
 
 use crate::classifier;
 use crate::models::{
@@ -49,6 +50,8 @@ fn build_classification_prompt(categories: &[Category]) -> String {
 pub struct AppState {
     pub db: Arc<Database>,
     pub refresh_in_progress: Arc<AtomicBool>,
+    pub refresh_progress_percent: Arc<AtomicU8>,
+    pub last_refresh_result: Arc<RwLock<RefreshResult>>,
     pub backlog_classify_in_progress: Arc<AtomicBool>,
 }
 
@@ -265,6 +268,37 @@ fn collect_delta_ids(upserted: &crate::storage::MessageUpsertResult) -> Vec<Stri
     ids
 }
 
+fn empty_refresh_result() -> RefreshResult {
+    RefreshResult {
+        new_messages: 0,
+        classified: 0,
+        pending_classification: 0,
+        in_progress: false,
+        progress_percent: 0,
+        slack_fetch_ms: 0,
+        db_write_ms: 0,
+        classify_ms: 0,
+        avatar_ms: 0,
+        errors: vec![],
+    }
+}
+
+fn set_refresh_progress(state: &AppState, progress_percent: u8) {
+    state
+        .refresh_progress_percent
+        .store(progress_percent.min(100), Ordering::SeqCst);
+}
+
+async fn current_refresh_snapshot(state: &AppState) -> RefreshResult {
+    let mut snapshot = state.last_refresh_result.read().await.clone();
+    snapshot.in_progress = state.refresh_in_progress.load(Ordering::SeqCst);
+    snapshot.progress_percent = state
+        .refresh_progress_percent
+        .load(Ordering::SeqCst)
+        .min(100);
+    snapshot
+}
+
 #[tauri::command]
 pub async fn get_messages(
     state: State<'_, AppState>,
@@ -294,41 +328,43 @@ pub async fn get_message_counts(
 pub async fn refresh_inbox(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    start_if_idle: Option<bool>,
 ) -> Result<RefreshResult, String> {
+    let start_if_idle = start_if_idle.unwrap_or(true);
+    if !start_if_idle {
+        return Ok(current_refresh_snapshot(&state).await);
+    }
+
     let Some(_refresh_guard) = AtomicFlagGuard::acquire(state.refresh_in_progress.clone()) else {
-        return Ok(RefreshResult {
-            new_messages: 0,
-            classified: 0,
-            pending_classification: 0,
-            in_progress: true,
-            slack_fetch_ms: 0,
-            db_write_ms: 0,
-            classify_ms: 0,
-            avatar_ms: 0,
-            errors: vec![],
-        });
+        return Ok(current_refresh_snapshot(&state).await);
     };
 
+    set_refresh_progress(&state, 5);
+    {
+        let mut snapshot = state.last_refresh_result.write().await;
+        *snapshot = RefreshResult {
+            in_progress: true,
+            progress_percent: 5,
+            ..empty_refresh_result()
+        };
+    }
+
     let settings = state.db.get_settings()?;
+    set_refresh_progress(&state, 12);
     let categories = settings.effective_categories();
     let rules = settings.effective_rules();
     let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
     let system_prompt = build_classification_prompt(&categories);
     let mut result = RefreshResult {
-        new_messages: 0,
-        classified: 0,
-        pending_classification: 0,
-        in_progress: false,
-        slack_fetch_ms: 0,
-        db_write_ms: 0,
-        classify_ms: 0,
-        avatar_ms: 0,
-        errors: vec![],
+        in_progress: true,
+        progress_percent: 12,
+        ..empty_refresh_result()
     };
     let mut delta_ids: Vec<String> = Vec::new();
 
     // Fetch from Slack
     if let (Some(ref token), Some(ref cookie)) = (&settings.slack_token, &settings.slack_cookie) {
+        set_refresh_progress(&state, 20);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
@@ -493,10 +529,12 @@ pub async fn refresh_inbox(
             }
             Err(e) => result.errors.push(format!("Slack: {}", e)),
         }
+        set_refresh_progress(&state, 62);
     } else {
         result
             .errors
             .push("Slack credentials not configured".to_string());
+        set_refresh_progress(&state, 62);
     }
 
     let mut classification_guard =
@@ -529,11 +567,13 @@ pub async fn refresh_inbox(
         }
     }
     result.classify_ms = classify_start.elapsed().as_millis() as u64;
+    set_refresh_progress(&state, 82);
 
     match state.db.get_unclassified_inbox_count() {
         Ok(pending) => result.pending_classification = pending,
         Err(e) => result.errors.push(format!("Classifier: {}", e)),
     }
+    set_refresh_progress(&state, 88);
 
     if result.pending_classification > 0 {
         if let Some(backlog_guard) = classification_guard.take() {
@@ -654,6 +694,7 @@ pub async fn refresh_inbox(
             });
         }
     }
+    set_refresh_progress(&state, 95);
 
     if result.new_messages > 0 {
         let enabled = settings.notifications_enabled.unwrap_or(true);
@@ -676,6 +717,14 @@ pub async fn refresh_inbox(
                 .body(&body)
                 .show();
         }
+    }
+
+    set_refresh_progress(&state, 100);
+    result.in_progress = false;
+    result.progress_percent = 100;
+    {
+        let mut snapshot = state.last_refresh_result.write().await;
+        *snapshot = result.clone();
     }
 
     Ok(result)

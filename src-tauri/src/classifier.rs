@@ -2,6 +2,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -38,6 +39,7 @@ const CLASSIFIER_RETRIES: usize = 2;
 const CLAUDE_MODEL: &str = "claude-haiku-4-5-20251001";
 const OPENAI_MODEL: &str = "gpt-5-mini";
 const CODEX_REASONING_OVERRIDE: &str = r#"model_reasoning_effort="high""#;
+const CODEX_COMMON_PATHS: [&str; 2] = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"];
 
 pub async fn classify_messages_claude(
     api_key: &str,
@@ -96,7 +98,8 @@ pub async fn classify_messages_codex(
 }
 
 pub async fn get_codex_status() -> CodexStatus {
-    let version_warning = match Command::new("codex").arg("--version").output().await {
+    let codex_bin = resolve_codex_binary().await;
+    let version_warning = match Command::new(&codex_bin).arg("--version").output().await {
         Ok(output) => {
             if output.status.success() {
                 None
@@ -116,7 +119,7 @@ pub async fn get_codex_status() -> CodexStatus {
                 auth_mode: None,
                 has_codex_subscription: false,
                 message: if err.kind() == io::ErrorKind::NotFound {
-                    "Codex CLI is not installed".to_string()
+                    "Codex CLI is not installed or not visible to Dispatch".to_string()
                 } else {
                     format!("Failed to run Codex CLI: {}", err)
                 },
@@ -131,7 +134,7 @@ pub async fn get_codex_status() -> CodexStatus {
         }
     };
 
-    match Command::new("codex")
+    match Command::new(&codex_bin)
         .arg("-c")
         .arg(CODEX_REASONING_OVERRIDE)
         .arg("login")
@@ -412,7 +415,8 @@ async fn classify_batch_codex(
 }
 
 async fn run_codex_exec(prompt: &str) -> Result<String, String> {
-    let mut child = Command::new("codex")
+    let codex_bin = resolve_codex_binary().await;
+    let mut child = Command::new(&codex_bin)
         .arg("-c")
         .arg(CODEX_REASONING_OVERRIDE)
         .arg("exec")
@@ -425,7 +429,7 @@ async fn run_codex_exec(prompt: &str) -> Result<String, String> {
         .spawn()
         .map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
-                "Codex CLI is not installed".to_string()
+                "Codex CLI is not installed or not visible to Dispatch".to_string()
             } else {
                 format!("Failed to start Codex CLI: {}", e)
             }
@@ -508,6 +512,57 @@ fn normalize_command_output(stdout: &[u8], stderr: &[u8]) -> String {
         format!("{}\n{}", stdout_text, stderr_text)
     };
     joined.trim().to_string()
+}
+
+fn first_non_empty_line(value: &str) -> Option<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.to_string())
+}
+
+async fn resolve_codex_binary() -> String {
+    if let Ok(from_env) = std::env::var("CODEX_PATH") {
+        let candidate = from_env.trim();
+        if !candidate.is_empty() {
+            return candidate.to_string();
+        }
+    }
+
+    for candidate in CODEX_COMMON_PATHS {
+        if Path::new(candidate).is_file() {
+            return candidate.to_string();
+        }
+    }
+
+    if let Ok(output) = Command::new("which").arg("codex").output().await {
+        if output.status.success() {
+            if let Some(path) = first_non_empty_line(&normalize_command_output(&output.stdout, &[]))
+            {
+                return path;
+            }
+        }
+    }
+
+    for shell in ["zsh", "bash"] {
+        if let Ok(output) = Command::new(shell)
+            .arg("-lc")
+            .arg("command -v codex")
+            .output()
+            .await
+        {
+            if output.status.success() {
+                if let Some(path) =
+                    first_non_empty_line(&normalize_command_output(&output.stdout, &[]))
+                {
+                    return path;
+                }
+            }
+        }
+    }
+
+    "codex".to_string()
 }
 
 fn extract_openai_output_text(response: &Value) -> Option<String> {

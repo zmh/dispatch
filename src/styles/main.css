@@ -351,7 +351,8 @@ body {
 }
 
 .loading-fixed-label-refresh {
-  min-width: 27ch;
+  min-width: 14ch;
+  text-align: left;
 }
 
 .tab-action svg {
@@ -2208,6 +2209,10 @@ body {
 
 .onboarding-loading-error {
   color: var(--error);
+}
+
+.onboarding-loading-note {
+  color: var(--text-dim);
 }
 
 .onboarding-loading-action {
