@@ -70,6 +70,7 @@ export function useMessages() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
   const [refreshProgressPercent, setRefreshProgressPercent] = useState(0);
+  const [refreshStatusVisible, setRefreshStatusVisible] = useState(false);
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const refreshStatusPollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const afterArchiveRef = useRef<string>("newer");
@@ -142,14 +143,18 @@ export function useMessages() {
     }
   }, [tab, selectedIndex]);
 
-  const doRefresh = useCallback(async () => {
+  const doRefresh = useCallback(async (showStatus: boolean = false) => {
     if (refreshPromiseRef.current) {
+      if (showStatus) {
+        setRefreshStatusVisible(true);
+      }
       return refreshPromiseRef.current;
     }
 
     const run = (async () => {
       setRefreshing(true);
       setRefreshProgressPercent(1);
+      setRefreshStatusVisible(showStatus);
 
       try {
         const activeRefresh = refreshInbox(true);
@@ -220,6 +225,7 @@ export function useMessages() {
           refreshStatusPollInterval.current = null;
         }
         setRefreshProgressPercent(0);
+        setRefreshStatusVisible(false);
         setRefreshing(false);
         refreshPromiseRef.current = null;
       }
@@ -490,6 +496,7 @@ export function useMessages() {
     loading,
     refreshing,
     refreshProgressPercent,
+    refreshStatusVisible,
     lastRefreshResult,
     setSelectedIndex,
     setSelectionAnchor,

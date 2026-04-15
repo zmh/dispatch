@@ -5,10 +5,7 @@ interface InboxTabsProps {
   tab: string;
   counts: MessageCounts;
   categories: Category[];
-  refreshing: boolean;
-  refreshProgressPercent: number;
   onSwitchTab: (tab: string) => void;
-  onRefresh: () => void;
   onOpenSettings: () => void;
 }
 
@@ -18,10 +15,7 @@ export function InboxTabs({
   tab,
   counts,
   categories,
-  refreshing,
-  refreshProgressPercent,
   onSwitchTab,
-  onRefresh,
   onOpenSettings,
 }: InboxTabsProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -93,24 +87,6 @@ export function InboxTabs({
             </div>
           )}
         </div>
-        <button
-          className="tab-action"
-          onClick={onRefresh}
-          disabled={refreshing}
-          title="Refresh (r)"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={refreshing ? "spin" : ""}>
-            <path d="M21 2v6h-6" />
-            <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-            <path d="M3 22v-6h6" />
-            <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-          </svg>
-          <span className="loading-fixed-label loading-fixed-label-refresh">
-            {refreshing
-              ? `Refreshing ${Math.max(1, Math.min(100, refreshProgressPercent))}%`
-              : "Refresh"}
-          </span>
-        </button>
         <button
           className="tab-action"
           onClick={onOpenSettings}

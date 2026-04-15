@@ -291,7 +291,14 @@ body {
 .tabs-left, .tabs-right {
   display: flex;
   align-items: center;
+}
+
+.tabs-left {
   gap: 2px;
+}
+
+.tabs-right {
+  gap: 8px;
 }
 
 .tab {
@@ -348,11 +355,6 @@ body {
   display: inline-block;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-
-.loading-fixed-label-refresh {
-  min-width: 14ch;
-  text-align: left;
 }
 
 .tab-action svg {
@@ -619,6 +621,24 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.shortcut-refresh-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcut-refresh-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-muted);
+  border-right-color: var(--text-muted);
+  animation: spin 0.75s linear infinite;
 }
 
 .shortcut {

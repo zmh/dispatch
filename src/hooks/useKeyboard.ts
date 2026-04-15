@@ -27,7 +27,7 @@ interface UseKeyboardProps {
   doStarMany: (ids: string[]) => Promise<void>;
   doToggleUnreadMany: (ids: string[]) => Promise<void>;
   doOpenLink: (url: string) => Promise<void>;
-  doRefresh: () => Promise<void>;
+  doRefresh: (showStatus?: boolean) => Promise<void>;
   setShowSnoozeForSelected: () => void;
 }
 
@@ -188,7 +188,7 @@ export function useKeyboard({
           break;
         case "r":
           e.preventDefault();
-          doRefresh();
+          doRefresh(true);
           break;
         case "Tab":
           e.preventDefault();

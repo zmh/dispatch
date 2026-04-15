@@ -25,6 +25,7 @@ function App() {
     loading,
     refreshing,
     refreshProgressPercent,
+    refreshStatusVisible,
     lastRefreshResult,
     setSelectedIndex,
     setSelectionAnchor,
@@ -246,10 +247,7 @@ function App() {
         tab={tab}
         counts={counts}
         categories={categories}
-        refreshing={refreshing}
-        refreshProgressPercent={refreshProgressPercent}
         onSwitchTab={switchTab}
-        onRefresh={doRefresh}
         onOpenSettings={() => setShowSettings(true)}
       />
 
@@ -271,7 +269,13 @@ function App() {
       </div>
 
       <div className="shortcut-bar">
-        {lastRefreshResult && lastRefreshResult.errors.length > 0 && (
+        {refreshStatusVisible && refreshing && (
+          <span className="shortcut-refresh-status" aria-live="polite">
+            <span className="shortcut-refresh-spinner" aria-hidden="true" />
+            <span>{`Refreshing... ${Math.max(1, Math.min(100, refreshProgressPercent))}%`}</span>
+          </span>
+        )}
+        {!refreshStatusVisible && lastRefreshResult && lastRefreshResult.errors.length > 0 && (
           <span className="status-errors">
             ⚠ {lastRefreshResult.errors[0]}
           </span>
