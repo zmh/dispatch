@@ -54,7 +54,9 @@ export interface CategoryRule {
 export interface Settings {
   slack_token: string | null;
   slack_cookie: string | null;
+  ai_provider: string | null;
   claude_api_key: string | null;
+  openai_api_key: string | null;
   slack_filters: SlackFilter[] | null;
   categories: Category[] | null;
   category_rules: CategoryRule[] | null;
@@ -130,6 +132,18 @@ export async function openLink(url: string, useSlackApp: boolean = false): Promi
 
 export async function getSettings(): Promise<Settings> {
   return invoke("get_settings");
+}
+
+export interface CodexStatus {
+  installed: boolean;
+  authenticated: boolean;
+  auth_mode: string | null;
+  has_codex_subscription: boolean;
+  message: string;
+}
+
+export async function getCodexStatus(): Promise<CodexStatus> {
+  return invoke("get_codex_status");
 }
 
 export interface SaveSettingsResult {

@@ -44,7 +44,7 @@ Create split inboxes with keyword, sender, and channel rules. Sort messages by i
 
 ### Intelligent Classification
 
-Dispatch can optionally use Claude to classify important messages, so high-signal updates still surface even when you are not directly mentioned.
+Dispatch can optionally use Claude, OpenAI, or Codex to classify important messages, so high-signal updates still surface even when you are not directly mentioned.
 
 ### Snooze, Star, Done
 

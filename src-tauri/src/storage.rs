@@ -82,9 +82,7 @@ impl Database {
         }
 
         // Migration: add unread column if missing
-        let has_unread: bool = conn
-            .prepare("SELECT unread FROM messages LIMIT 0")
-            .is_ok();
+        let has_unread: bool = conn.prepare("SELECT unread FROM messages LIMIT 0").is_ok();
         if !has_unread {
             conn.execute_batch("ALTER TABLE messages ADD COLUMN unread INTEGER DEFAULT 0;")
                 .map_err(|e| e.to_string())?;
@@ -785,10 +783,32 @@ impl Database {
             }
         }
 
+        let mut ai_provider = self.get_setting("ai_provider")?;
+        let claude_api_key = self.get_setting("claude_api_key")?;
+        let ai_provider_migrated = self
+            .get_setting("ai_provider_migrated_v1")?
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !ai_provider_migrated
+            && ai_provider.is_none()
+            && claude_api_key
+                .as_deref()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+        {
+            ai_provider = Some("claude".to_string());
+            self.set_setting("ai_provider", "claude")?;
+        }
+        if !ai_provider_migrated {
+            self.set_setting("ai_provider_migrated_v1", "true")?;
+        }
+
         Ok(Settings {
             slack_token: self.get_setting("slack_token")?,
             slack_cookie: self.get_setting("slack_cookie")?,
-            claude_api_key: self.get_setting("claude_api_key")?,
+            ai_provider,
+            claude_api_key,
+            openai_api_key: self.get_setting("openai_api_key")?,
             slack_filters,
             categories,
             category_rules,
@@ -830,8 +850,19 @@ impl Database {
         if let Some(ref val) = settings.slack_cookie {
             self.set_setting("slack_cookie", val)?;
         }
-        if let Some(ref val) = settings.claude_api_key {
-            self.set_setting("claude_api_key", val)?;
+        match settings.ai_provider.as_deref().map(str::trim) {
+            Some("") | None => self.delete_setting("ai_provider")?,
+            Some(val) => self.set_setting("ai_provider", val)?,
+        }
+
+        match settings.claude_api_key.as_deref().map(str::trim) {
+            Some("") | None => self.delete_setting("claude_api_key")?,
+            Some(val) => self.set_setting("claude_api_key", val)?,
+        }
+
+        match settings.openai_api_key.as_deref().map(str::trim) {
+            Some("") | None => self.delete_setting("openai_api_key")?,
+            Some(val) => self.set_setting("openai_api_key", val)?,
         }
 
         // Save slack filters as JSON — archive messages from removed filters
@@ -1360,8 +1391,15 @@ mod tests {
         );
         db.upsert_messages_batch(&[original]).expect("seed");
 
-        let mut updated =
-            sample_message("same-id", "unclassified", "inbox", "new body", false, false, None);
+        let mut updated = sample_message(
+            "same-id",
+            "unclassified",
+            "inbox",
+            "new body",
+            false,
+            false,
+            None,
+        );
         updated.avatar_url = None;
         db.upsert_messages_batch(&[updated]).expect("upsert");
 
@@ -1454,5 +1492,60 @@ mod tests {
         assert!(row.unread);
 
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn get_settings_migrates_ai_provider_to_claude_for_existing_claude_key() {
+        let db = Database::new(":memory:").expect("db init");
+        db.set_setting("claude_api_key", "sk-ant-test")
+            .expect("seed claude key");
+
+        let settings = db.get_settings().expect("load settings");
+        assert_eq!(settings.ai_provider.as_deref(), Some("claude"));
+        assert_eq!(
+            db.get_setting("ai_provider").expect("provider key"),
+            Some("claude".to_string())
+        );
+    }
+
+    #[test]
+    fn save_settings_clears_ai_provider_and_ai_keys() {
+        let db = Database::new(":memory:").expect("db init");
+        db.set_setting("ai_provider", "codex")
+            .expect("seed provider");
+        db.set_setting("claude_api_key", "sk-ant-test")
+            .expect("seed claude key");
+        db.set_setting("openai_api_key", "sk-openai-test")
+            .expect("seed openai key");
+
+        let mut settings = db.get_settings().expect("load settings");
+        settings.ai_provider = None;
+        settings.claude_api_key = None;
+        settings.openai_api_key = Some("   ".to_string());
+        db.save_settings(&settings).expect("save settings");
+
+        assert_eq!(db.get_setting("ai_provider").expect("provider"), None);
+        assert_eq!(db.get_setting("claude_api_key").expect("claude"), None);
+        assert_eq!(db.get_setting("openai_api_key").expect("openai"), None);
+    }
+
+    #[test]
+    fn rules_only_choice_stays_disabled_after_claude_migration() {
+        let db = Database::new(":memory:").expect("db init");
+        db.set_setting("claude_api_key", "sk-ant-test")
+            .expect("seed claude key");
+
+        // First read migrates old installs with Claude key to provider=claude.
+        let initial = db.get_settings().expect("load settings");
+        assert_eq!(initial.ai_provider.as_deref(), Some("claude"));
+
+        // User explicitly chooses rules-only (no AI provider).
+        let mut updated = initial.clone();
+        updated.ai_provider = None;
+        db.save_settings(&updated).expect("save settings");
+
+        // Must remain rules-only on subsequent reads.
+        let reloaded = db.get_settings().expect("reload settings");
+        assert_eq!(reloaded.ai_provider, None);
     }
 }

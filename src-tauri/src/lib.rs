@@ -260,6 +260,7 @@ pub fn run() {
             commands::set_unread_message,
             commands::open_link,
             commands::get_settings,
+            commands::get_codex_status,
             commands::save_settings,
             commands::populate_slack_cache,
             commands::search_slack_users,

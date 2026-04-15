@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Settings as SettingsType,
+  CodexStatus,
   SlackFilter,
   Category,
   CategoryRule,
   getSettings,
+  getCodexStatus,
   saveSettings,
   populateSlackCache,
 } from "../lib/tauri";
@@ -69,7 +71,9 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const [settings, setSettings] = useState<SettingsType>({
     slack_token: null,
     slack_cookie: null,
+    ai_provider: null,
     claude_api_key: null,
+    openai_api_key: null,
     slack_filters: null,
     categories: null,
     category_rules: null,
@@ -86,6 +90,8 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const [newCategoryName, setNewCategoryName] = useState("");
   const [ruleInputs, setRuleInputs] = useState<Record<string, string>>({});
   const [refreshingCache, setRefreshingCache] = useState(false);
+  const [loadingCodexStatus, setLoadingCodexStatus] = useState(false);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reclassifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reclassifyQueuedRef = useRef(false);
@@ -98,6 +104,15 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const filters = settings.slack_filters ?? [];
   const categories = settings.categories ?? DEFAULT_CATEGORIES;
   const rules = settings.category_rules ?? [];
+  const selectedAiProvider = (settings.ai_provider || "").trim().toLowerCase();
+  const aiConfigured =
+    selectedAiProvider === "claude"
+      ? !!settings.claude_api_key
+      : selectedAiProvider === "openai"
+        ? !!settings.openai_api_key
+        : selectedAiProvider === "codex"
+          ? !!codexStatus?.authenticated
+          : false;
 
   useEffect(() => {
     (async () => {
@@ -110,6 +125,30 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
       }
     })();
   }, []);
+
+  const refreshCodexStatus = useCallback(async () => {
+    setLoadingCodexStatus(true);
+    try {
+      const status = await getCodexStatus();
+      setCodexStatus(status);
+    } catch (e) {
+      console.error("Failed to load Codex status:", e);
+      setCodexStatus({
+        installed: false,
+        authenticated: false,
+        auth_mode: null,
+        has_codex_subscription: false,
+        message: "Could not read Codex status",
+      });
+    } finally {
+      setLoadingCodexStatus(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "accounts") return;
+    void refreshCodexStatus();
+  }, [activeTab, refreshCodexStatus]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -602,19 +641,94 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
             </div>
 
             <div className="settings-row-ia">
-              <span className="settings-row-label">Claude API key:</span>
+              <span className="settings-row-label">AI provider:</span>
               <div className="settings-row-control">
-                <input
-                  type="password"
-                  className="settings-input"
-                  value={settings.claude_api_key || ""}
-                  onChange={(e) =>
-                    setSettings({ ...settings, claude_api_key: e.target.value || null })
-                  }
-                  placeholder="sk-ant-..."
-                />
+                {([
+                  { key: "codex", label: "Codex (ChatGPT/Codex subscription)" },
+                  { key: "openai", label: "OpenAI API key" },
+                  { key: "claude", label: "Claude API key" },
+                  { key: "", label: "Rules only (no AI provider)" },
+                ] as const).map((opt) => (
+                  <label key={opt.key || "none"} className="settings-checkbox-label">
+                    <input
+                      type="radio"
+                      name="ai_provider"
+                      checked={selectedAiProvider === opt.key}
+                      onChange={() =>
+                        setSettings({ ...settings, ai_provider: opt.key || null })
+                      }
+                    />
+                    {opt.label}
+                  </label>
+                ))}
               </div>
             </div>
+
+            {selectedAiProvider === "claude" && (
+              <div className="settings-row-ia">
+                <span className="settings-row-label">Claude API key:</span>
+                <div className="settings-row-control">
+                  <input
+                    type="password"
+                    className="settings-input"
+                    value={settings.claude_api_key || ""}
+                    onChange={(e) =>
+                      setSettings({ ...settings, claude_api_key: e.target.value || null })
+                    }
+                    placeholder="sk-ant-..."
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedAiProvider === "openai" && (
+              <div className="settings-row-ia">
+                <span className="settings-row-label">OpenAI API key:</span>
+                <div className="settings-row-control">
+                  <input
+                    type="password"
+                    className="settings-input"
+                    value={settings.openai_api_key || ""}
+                    onChange={(e) =>
+                      setSettings({ ...settings, openai_api_key: e.target.value || null })
+                    }
+                    placeholder="sk-..."
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedAiProvider === "codex" && (
+              <div className="settings-row-ia">
+                <span className="settings-row-label">Codex status:</span>
+                <div className="settings-row-control">
+                  <div className="settings-hint-text" style={{ marginBottom: 8 }}>
+                    {loadingCodexStatus
+                      ? "Checking Codex login..."
+                      : codexStatus
+                        ? codexStatus.message
+                        : "Status unavailable"}
+                  </div>
+                  {codexStatus && (
+                    <div className="settings-hint-text" style={{ marginBottom: 8 }}>
+                      Installed: {codexStatus.installed ? "yes" : "no"} · Authenticated:{" "}
+                      {codexStatus.authenticated ? "yes" : "no"} · Mode:{" "}
+                      {codexStatus.auth_mode || "unknown"} · Subscription:{" "}
+                      {codexStatus.has_codex_subscription ? "yes" : "no"}
+                    </div>
+                  )}
+                  <button
+                    className="setup-wizard-btn"
+                    onClick={() => {
+                      void refreshCodexStatus();
+                    }}
+                    disabled={loadingCodexStatus}
+                  >
+                    {loadingCodexStatus ? "Checking..." : "Refresh Codex Status"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {onRunSetup && (
               <div className="settings-row-ia">
@@ -727,8 +841,17 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
                             rows={2}
                             placeholder="Describe what messages belong here (used by AI classifier)..."
                           />
-                          {!settings.claude_api_key && (
-                            <div className="category-ai-hint">Add a Claude API key to enable AI classification</div>
+                          {!aiConfigured && (
+                            <div className="category-ai-hint">
+                              {selectedAiProvider === "claude" &&
+                                "Add a Claude API key to enable AI classification"}
+                              {selectedAiProvider === "openai" &&
+                                "Add an OpenAI API key to enable AI classification"}
+                              {selectedAiProvider === "codex" &&
+                                "Sign in to Codex to enable AI classification"}
+                              {!selectedAiProvider &&
+                                "Choose an AI provider in Accounts to enable AI classification"}
+                            </div>
                           )}
 
                           {catRules.length > 0 && (

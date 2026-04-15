@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
+  CodexStatus,
   Settings,
   SlackFilter,
   SlackChannel,
@@ -11,6 +12,7 @@ import {
   populateSlackCache,
   searchSlackChannels,
   getOnboardingSuggestions,
+  getCodexStatus,
 } from "../lib/tauri";
 import { TypeaheadInput, TypeaheadItem } from "./TypeaheadInput";
 
@@ -40,10 +42,16 @@ function CopyBlock({ code }: { code: string }) {
 }
 
 export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWizardProps) {
+  const initialAiProvider = (initialSettings?.ai_provider || "").trim().toLowerCase();
   const [step, setStep] = useState(0);
   const [slackToken, setSlackToken] = useState(initialSettings?.slack_token || "");
   const [slackCookie, setSlackCookie] = useState(initialSettings?.slack_cookie || "");
   const [filters, setFilters] = useState<SlackFilter[]>(initialSettings?.slack_filters || []);
+  const [aiProvider, setAiProvider] = useState(initialAiProvider);
+  const [savedAiProvider, setSavedAiProvider] = useState(initialAiProvider);
+  const [claudeApiKey, setClaudeApiKey] = useState(initialSettings?.claude_api_key || "");
+  const [openaiApiKey, setOpenaiApiKey] = useState(initialSettings?.openai_api_key || "");
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [connectionInfo, setConnectionInfo] = useState<SlackConnectionInfo | null>(null);
   const [suggestedChannels, setSuggestedChannels] = useState<SlackChannel[]>([]);
   const [suggestedPeople, setSuggestedPeople] = useState<SlackUser[]>([]);
@@ -51,6 +59,8 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingAi, setSavingAi] = useState(false);
+  const [loadingCodexStatus, setLoadingCodexStatus] = useState(false);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load suggestions when cache is ready and we're on step 2
@@ -79,13 +89,31 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
     }
   }, [step, cacheReady]);
 
+  useEffect(() => {
+    if (step !== 3 || aiProvider !== "codex") return;
+    setLoadingCodexStatus(true);
+    getCodexStatus()
+      .then((status) => setCodexStatus(status))
+      .catch((e) => {
+        console.error("Failed to load Codex status:", e);
+        setCodexStatus({
+          installed: false,
+          authenticated: false,
+          auth_mode: null,
+          has_codex_subscription: false,
+          message: "Could not read Codex status",
+        });
+      })
+      .finally(() => setLoadingCodexStatus(false));
+  }, [step, aiProvider]);
+
   // Keyboard handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Enter" && !(e.target instanceof HTMLInputElement)) {
         e.preventDefault();
         if (step === 0) setStep(1);
-        else if (step === 3) handleFinish();
+        else if (step === 4) handleFinish();
       }
       if (e.key === "Escape" && !(e.target instanceof HTMLInputElement)) {
         handleSkipAll();
@@ -128,7 +156,7 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   };
 
   const handleSkipCredentials = async () => {
-    // Jump to final step
+    // Skip Slack setup and continue onboarding
     setStep(3);
   };
 
@@ -149,6 +177,25 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
     } finally {
       setSaving(false);
       setStep(3);
+    }
+  };
+
+  const handleAiNext = async () => {
+    setSavingAi(true);
+    try {
+      const currentSettings = await getSettings();
+      await saveSettings({
+        ...currentSettings,
+        ai_provider: aiProvider || null,
+        claude_api_key: claudeApiKey || null,
+        openai_api_key: openaiApiKey || null,
+      });
+      setSavedAiProvider(aiProvider);
+    } catch (e) {
+      console.error("Failed to save AI settings:", e);
+    } finally {
+      setSavingAi(false);
+      setStep(4);
     }
   };
 
@@ -211,7 +258,7 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
       <div className="onboarding-dialog">
         {/* Step indicator */}
         <div className="onboarding-steps">
-          {[0, 1, 2, 3].map((s) => (
+          {[0, 1, 2, 3, 4].map((s) => (
             <div key={s} className={`onboarding-dot ${s === step ? "active" : s < step ? "completed" : ""}`} />
           ))}
         </div>
@@ -398,8 +445,114 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
           </div>
         )}
 
-        {/* Step 3: All Set */}
+        {/* Step 3: Optional AI setup */}
         {step === 3 && (
+          <div className="onboarding-content">
+            <h1 className="onboarding-title">AI classification (optional)</h1>
+            <p className="onboarding-subtitle">
+              Pick how Dispatch should classify messages beyond your rules.
+            </p>
+
+            <div className="onboarding-summary" style={{ marginBottom: 12 }}>
+              {([
+                { key: "codex", label: "Codex (ChatGPT/Codex subscription)" },
+                { key: "openai", label: "OpenAI API key" },
+                { key: "claude", label: "Claude API key" },
+                { key: "", label: "Not now" },
+              ] as const).map((opt) => (
+                <label key={opt.key || "none"} className="settings-checkbox-label">
+                  <input
+                    type="radio"
+                    name="onboarding_ai_provider"
+                    checked={aiProvider === opt.key}
+                    onChange={() => setAiProvider(opt.key)}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+
+            {aiProvider === "claude" && (
+              <div className="onboarding-input-row" style={{ marginBottom: 12 }}>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={claudeApiKey}
+                  onChange={(e) => setClaudeApiKey(e.target.value)}
+                  placeholder="Claude API key (sk-ant-...)"
+                />
+              </div>
+            )}
+
+            {aiProvider === "openai" && (
+              <div className="onboarding-input-row" style={{ marginBottom: 12 }}>
+                <input
+                  type="password"
+                  className="settings-input"
+                  value={openaiApiKey}
+                  onChange={(e) => setOpenaiApiKey(e.target.value)}
+                  placeholder="OpenAI API key (sk-...)"
+                />
+              </div>
+            )}
+
+            {aiProvider === "codex" && (
+              <div className="onboarding-summary" style={{ marginBottom: 12 }}>
+                <div className="onboarding-summary-item">
+                  <span className={`onboarding-summary-status ${codexStatus?.authenticated ? "good" : "skip"}`}>
+                    {codexStatus?.authenticated ? "\u2713" : "\u2013"}
+                  </span>
+                  <span>
+                    {loadingCodexStatus
+                      ? "Checking Codex status..."
+                      : codexStatus
+                        ? codexStatus.message
+                        : "Status unavailable"}
+                  </span>
+                </div>
+                <div className="onboarding-summary-item">
+                  <span className="onboarding-summary-status">{"\u00b7"}</span>
+                  <span>
+                    Mode: {codexStatus?.auth_mode || "unknown"} · Subscription:{" "}
+                    {codexStatus?.has_codex_subscription ? "yes" : "no"}
+                  </span>
+                </div>
+                <div className="onboarding-footer onboarding-footer-center" style={{ marginTop: 8 }}>
+                  <button
+                    className="dialog-cancel"
+                    onClick={() => {
+                      setLoadingCodexStatus(true);
+                      getCodexStatus()
+                        .then((status) => setCodexStatus(status))
+                        .catch((e) => {
+                          console.error("Failed to load Codex status:", e);
+                        })
+                        .finally(() => setLoadingCodexStatus(false));
+                    }}
+                    disabled={loadingCodexStatus}
+                  >
+                    {loadingCodexStatus ? "Checking..." : "Refresh Codex Status"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="onboarding-footer">
+              <button className="dialog-cancel" onClick={() => setStep(2)}>
+                Back
+              </button>
+              <button className="onboarding-skip" onClick={() => setStep(4)}>
+                Skip for now
+              </button>
+              <button className="dialog-save" onClick={handleAiNext} disabled={savingAi}>
+                {savingAi ? "Saving..." : "Continue"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: All Set */}
+        {step === 4 && (
           <div className="onboarding-content">
             <div className="onboarding-welcome-icon">
               <span className="onboarding-check-icon">{"\u2713"}</span>
@@ -421,6 +574,16 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
               <div className="onboarding-summary-item">
                 <span className="onboarding-summary-status good">{"\u2713"}</span>
                 <span>Watching {filters.length + 1} source{filters.length !== 0 ? "s" : ""} (including to:me)</span>
+              </div>
+              <div className="onboarding-summary-item">
+                <span className={`onboarding-summary-status ${savedAiProvider ? "good" : "skip"}`}>
+                  {savedAiProvider ? "\u2713" : "\u2013"}
+                </span>
+                <span>
+                  {savedAiProvider
+                    ? `AI provider: ${savedAiProvider === "codex" ? "Codex" : savedAiProvider === "openai" ? "OpenAI" : "Claude"}`
+                    : "AI provider: not configured yet"}
+                </span>
               </div>
             </div>
 

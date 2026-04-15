@@ -68,7 +68,9 @@ pub struct CategoryRule {
 pub struct Settings {
     pub slack_token: Option<String>,
     pub slack_cookie: Option<String>,
+    pub ai_provider: Option<String>,
     pub claude_api_key: Option<String>,
+    pub openai_api_key: Option<String>,
     pub slack_filters: Option<Vec<SlackFilter>>,
     pub categories: Option<Vec<Category>>,
     pub category_rules: Option<Vec<CategoryRule>>,
@@ -86,7 +88,9 @@ impl Default for Settings {
         Self {
             slack_token: None,
             slack_cookie: None,
+            ai_provider: None,
             claude_api_key: None,
+            openai_api_key: None,
             slack_filters: None,
             categories: None,
             category_rules: None,
@@ -182,4 +186,13 @@ pub struct SlackConnectionInfo {
     pub user: String,
     pub team_id: String,
     pub user_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexStatus {
+    pub installed: bool,
+    pub authenticated: bool,
+    pub auth_mode: Option<String>,
+    pub has_codex_subscription: bool,
+    pub message: String,
 }

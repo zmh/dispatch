@@ -9,8 +9,9 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::classifier;
 use crate::models::{
-    Category, CategoryRule, Message, MessageCounts, OnboardingSuggestions, RefreshResult,
-    SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel, SlackConnectionInfo, SlackUser,
+    Category, CategoryRule, CodexStatus, Message, MessageCounts, OnboardingSuggestions,
+    RefreshResult, SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel,
+    SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -185,29 +186,72 @@ async fn classify_message_ids(
     ids: &[String],
     categories: &[Category],
     rules: &[CategoryRule],
+    ai_provider: Option<&str>,
     claude_api_key: Option<&str>,
+    openai_api_key: Option<&str>,
     category_names: &[String],
     system_prompt: &str,
-) -> Result<usize, String> {
+) -> Result<(usize, Option<String>), String> {
     let mut classified = 0usize;
 
     classified += apply_rules_for_ids(db, categories, rules, ids)?;
     let remaining = db.get_unclassified_messages_by_ids(ids)?;
     if remaining.is_empty() {
-        return Ok(classified);
+        return Ok((classified, None));
     }
 
-    if let Some(api_key) = claude_api_key {
-        let classifications =
-            classifier::classify_messages(api_key, system_prompt, &remaining, category_names)
-                .await?;
-        classified += db.update_classifications_batch(&classifications)?;
-    } else {
-        let remaining_ids: Vec<String> = remaining.into_iter().map(|m| m.id).collect();
-        classified += db.set_messages_to_other_by_ids(&remaining_ids)?;
-    }
+    let remaining_ids: Vec<String> = remaining.iter().map(|m| m.id.clone()).collect();
+    let provider = ai_provider
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("");
 
-    Ok(classified)
+    let classify_result = match provider {
+        "claude" => match claude_api_key.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(api_key) => {
+                classifier::classify_messages_claude(
+                    api_key,
+                    system_prompt,
+                    &remaining,
+                    category_names,
+                )
+                .await
+            }
+            None => {
+                Err("Claude provider selected but Claude API key is not configured".to_string())
+            }
+        },
+        "openai" => match openai_api_key.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(api_key) => {
+                classifier::classify_messages_openai(
+                    api_key,
+                    system_prompt,
+                    &remaining,
+                    category_names,
+                )
+                .await
+            }
+            None => {
+                Err("OpenAI provider selected but OpenAI API key is not configured".to_string())
+            }
+        },
+        "codex" => {
+            classifier::classify_messages_codex(system_prompt, &remaining, category_names).await
+        }
+        "" => {
+            classified += db.set_messages_to_other_by_ids(&remaining_ids)?;
+            return Ok((classified, None));
+        }
+        unknown => Err(format!("Unknown AI provider: {}", unknown)),
+    };
+
+    match classify_result {
+        Ok(classifications) => {
+            classified += db.update_classifications_batch(&classifications)?;
+            Ok((classified, None))
+        }
+        Err(err) => Ok((classified, Some(err))),
+    }
 }
 
 fn collect_delta_ids(upserted: &crate::storage::MessageUpsertResult) -> Vec<String> {
@@ -466,13 +510,20 @@ pub async fn refresh_inbox(
                 &delta_ids,
                 &categories,
                 &rules,
+                settings.ai_provider.as_deref(),
                 settings.claude_api_key.as_deref(),
+                settings.openai_api_key.as_deref(),
                 &category_names,
                 &system_prompt,
             )
             .await
             {
-                Ok(n) => result.classified += n,
+                Ok((n, err)) => {
+                    result.classified += n;
+                    if let Some(err) = err {
+                        result.errors.push(format!("Classifier: {}", err));
+                    }
+                }
                 Err(e) => result.errors.push(format!("Classifier: {}", e)),
             }
         }
@@ -492,7 +543,9 @@ pub async fn refresh_inbox(
             let rules = rules.clone();
             let category_names = category_names.clone();
             let system_prompt = system_prompt.clone();
+            let ai_provider = settings.ai_provider.clone();
             let claude_api_key = settings.claude_api_key.clone();
+            let openai_api_key = settings.openai_api_key.clone();
             tokio::spawn(async move {
                 let _guard = backlog_guard;
                 let mut total_classified = 0usize;
@@ -515,13 +568,27 @@ pub async fn refresh_inbox(
                         &ids,
                         &categories,
                         &rules,
+                        ai_provider.as_deref(),
                         claude_api_key.as_deref(),
+                        openai_api_key.as_deref(),
                         &category_names,
                         &system_prompt,
                     )
                     .await
                     {
-                        Ok(n) => total_classified += n,
+                        Ok((n, err)) => {
+                            total_classified += n;
+                            if let Some(err) = err {
+                                eprintln!("[haystack] Backlog classifier warning: {}", err);
+                                break;
+                            }
+                            if n == 0 {
+                                eprintln!(
+                                    "[haystack] Backlog classification made no progress; stopping background pass"
+                                );
+                                break;
+                            }
+                        }
                         Err(e) => {
                             eprintln!("[haystack] Backlog classification failed: {}", e);
                             break;
@@ -727,6 +794,11 @@ pub async fn open_link(
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     state.db.get_settings()
+}
+
+#[tauri::command]
+pub async fn get_codex_status() -> Result<CodexStatus, String> {
+    Ok(classifier::get_codex_status().await)
 }
 
 #[tauri::command]
