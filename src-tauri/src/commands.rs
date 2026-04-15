@@ -1,18 +1,20 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, State};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::RwLock;
 
 use crate::classifier;
+use crate::diagnostics::{DiagnosticEventInput, DEFAULT_LOG_FETCH_LIMIT, MAX_LOG_ENTRIES};
 use crate::models::{
-    Category, CategoryRule, CodexStatus, Message, MessageCounts, OnboardingSuggestions,
-    RefreshResult, SaveSettingsResult, Settings, SlackCacheStatus, SlackChannel,
-    SlackConnectionInfo, SlackUser,
+    Category, CategoryRule, CodexStatus, DiagnosticLogEntry, Message, MessageCounts,
+    OnboardingSuggestions, RefreshResult, SaveSettingsResult, Settings, SlackCacheStatus,
+    SlackChannel, SlackConnectionInfo, SlackUser,
 };
 use crate::slack;
 use crate::storage::Database;
@@ -119,10 +121,120 @@ const OVERLAP_SECONDS: i64 = 2 * 60 * 60;
 const DEEP_SCAN_INTERVAL_SECONDS: u64 = 12 * 60 * 60;
 const SLACK_PAGE_LIMIT: u32 = 3;
 const SLACK_RETRY_ATTEMPTS: usize = 2;
+const SLACK_CACHE_RETRY_ATTEMPTS: usize = 6;
+const ONBOARDING_DM_SUGGESTION_LIMIT: usize = 20;
+const ONBOARDING_CHANNEL_SUGGESTION_LIMIT: usize = 15;
+const ONBOARDING_CHANNEL_SUGGESTION_PAGES: u32 = 10;
 const AVATAR_FETCH_CONCURRENCY: usize = 4;
 const FOREGROUND_CLASSIFY_LIMIT: usize = 300;
 const BACKLOG_CLASSIFY_BATCH_SIZE: usize = 200;
 const INCREMENTAL_STATE_KEY: &str = "slack_incremental_state_v1";
+static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn now_epoch_seconds() -> Result<i64, String> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64)
+}
+
+fn next_run_id() -> Result<String, String> {
+    let ts = now_epoch_seconds()?;
+    let seq = RUN_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+    Ok(format!("refresh-{}-{}", ts, seq))
+}
+
+fn normalize_provider_label(provider: Option<&str>) -> String {
+    let trimmed = provider.unwrap_or_default().trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        "rules_only".to_string()
+    } else if matches!(trimmed.as_str(), "claude" | "openai" | "codex") {
+        trimmed
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn metadata_from_json(value: Value) -> Map<String, Value> {
+    value.as_object().cloned().unwrap_or_default()
+}
+
+fn log_diagnostic(
+    db: &Database,
+    run_id: Option<&str>,
+    scope: &str,
+    level: &str,
+    event: &str,
+    message: &str,
+    metadata: Map<String, Value>,
+) {
+    let _ = db.insert_diagnostic_log(DiagnosticEventInput {
+        run_id: run_id.map(str::to_string),
+        scope: scope.to_string(),
+        level: level.to_string(),
+        event: event.to_string(),
+        message: message.to_string(),
+        metadata,
+    });
+}
+
+fn codex_status_log_metadata(status: &CodexStatus, duration_ms: u64) -> Map<String, Value> {
+    let mut metadata = metadata_from_json(json!({
+        "provider_used": "codex",
+        "installed": status.installed,
+        "authenticated": status.authenticated,
+        "auth_mode": status.auth_mode.clone().unwrap_or_else(|| "unknown".to_string()),
+        "has_codex_subscription": status.has_codex_subscription,
+        "duration_ms": duration_ms
+    }));
+    if !status.installed || !status.authenticated {
+        metadata.insert("error".to_string(), Value::String(status.message.clone()));
+    }
+    metadata
+}
+
+#[derive(Debug, Default, Clone)]
+struct ClassifyOutcome {
+    classified: usize,
+    rules_matched_count: usize,
+    ai_attempted: bool,
+    ai_succeeded: bool,
+    provider_requested: String,
+    provider_used: String,
+    warning: Option<String>,
+    skipped_reason: Option<String>,
+    batch_size: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ClassifyFailure {
+    error: String,
+    outcome: ClassifyOutcome,
+}
+
+fn classify_failed_metadata(
+    phase: &str,
+    pending_before: usize,
+    pending_after: usize,
+    duration_ms: u64,
+    outcome: &ClassifyOutcome,
+    error: &str,
+) -> Map<String, Value> {
+    metadata_from_json(json!({
+        "phase": phase,
+        "provider_requested": outcome.provider_requested.clone(),
+        "provider_used": outcome.provider_used.clone(),
+        "rules_matched_count": outcome.rules_matched_count,
+        "ai_attempted": outcome.ai_attempted,
+        "ai_succeeded": outcome.ai_succeeded,
+        "classified_count": outcome.classified,
+        "pending_before": pending_before,
+        "pending_after": pending_after,
+        "duration_ms": duration_ms,
+        "batch_size": outcome.batch_size,
+        "error": error
+    }))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedQueryState {
@@ -161,6 +273,67 @@ fn save_incremental_state(db: &Database, state: &PersistedIncrementalState) -> R
     db.set_setting(INCREMENTAL_STATE_KEY, &json)
 }
 
+fn unique_ids_with_limit<I>(ids: I, limit: usize) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    if limit == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for id in ids {
+        if seen.insert(id.clone()) {
+            out.push(id);
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn now_epoch_u64() -> Result<u64, String> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs())
+}
+
+async fn fetch_slack_cache_snapshot(
+    token: &str,
+    cookie: &str,
+) -> Result<(Vec<SlackChannel>, Vec<SlackUser>), String> {
+    let token2 = token.to_string();
+    let cookie2 = cookie.to_string();
+    let mut channels = Vec::new();
+    let mut users = Vec::new();
+
+    let (channels_result, users_result) = tokio::join!(
+        slack::fetch_slack_channels_paged(token, cookie, SLACK_CACHE_RETRY_ATTEMPTS, |page| {
+            channels.extend_from_slice(page);
+            Ok(())
+        }),
+        slack::fetch_slack_users_paged(&token2, &cookie2, SLACK_CACHE_RETRY_ATTEMPTS, |page| {
+            users.extend_from_slice(page);
+            Ok(())
+        },)
+    );
+
+    let mut preload_errors = Vec::new();
+    if let Err(err) = channels_result {
+        preload_errors.push(format!("channels cache: {}", err));
+    }
+    if let Err(err) = users_result {
+        preload_errors.push(format!("users cache: {}", err));
+    }
+    if !preload_errors.is_empty() {
+        return Err(preload_errors.join(" | "));
+    }
+
+    Ok((channels, users))
+}
+
 struct AtomicFlagGuard {
     flag: Arc<AtomicBool>,
 }
@@ -194,13 +367,29 @@ async fn classify_message_ids(
     openai_api_key: Option<&str>,
     category_names: &[String],
     system_prompt: &str,
-) -> Result<(usize, Option<String>), String> {
-    let mut classified = 0usize;
+) -> Result<ClassifyOutcome, ClassifyFailure> {
+    let mut outcome = ClassifyOutcome {
+        provider_requested: normalize_provider_label(ai_provider),
+        provider_used: normalize_provider_label(ai_provider),
+        batch_size: ids.len(),
+        ..ClassifyOutcome::default()
+    };
 
-    classified += apply_rules_for_ids(db, categories, rules, ids)?;
-    let remaining = db.get_unclassified_messages_by_ids(ids)?;
+    outcome.rules_matched_count =
+        apply_rules_for_ids(db, categories, rules, ids).map_err(|e| ClassifyFailure {
+            error: e,
+            outcome: outcome.clone(),
+        })?;
+    outcome.classified += outcome.rules_matched_count;
+    let remaining = db
+        .get_unclassified_messages_by_ids(ids)
+        .map_err(|e| ClassifyFailure {
+            error: e,
+            outcome: outcome.clone(),
+        })?;
     if remaining.is_empty() {
-        return Ok((classified, None));
+        outcome.skipped_reason = Some("already_classified".to_string());
+        return Ok(outcome);
     }
 
     let remaining_ids: Vec<String> = remaining.iter().map(|m| m.id.clone()).collect();
@@ -212,6 +401,7 @@ async fn classify_message_ids(
     let classify_result = match provider {
         "claude" => match claude_api_key.map(str::trim).filter(|v| !v.is_empty()) {
             Some(api_key) => {
+                outcome.ai_attempted = true;
                 classifier::classify_messages_claude(
                     api_key,
                     system_prompt,
@@ -226,6 +416,7 @@ async fn classify_message_ids(
         },
         "openai" => match openai_api_key.map(str::trim).filter(|v| !v.is_empty()) {
             Some(api_key) => {
+                outcome.ai_attempted = true;
                 classifier::classify_messages_openai(
                     api_key,
                     system_prompt,
@@ -239,21 +430,38 @@ async fn classify_message_ids(
             }
         },
         "codex" => {
+            outcome.ai_attempted = true;
             classifier::classify_messages_codex(system_prompt, &remaining, category_names).await
         }
         "" => {
-            classified += db.set_messages_to_other_by_ids(&remaining_ids)?;
-            return Ok((classified, None));
+            outcome.provider_used = "rules_only".to_string();
+            outcome.classified += db
+                .set_messages_to_other_by_ids(&remaining_ids)
+                .map_err(|e| ClassifyFailure {
+                    error: e,
+                    outcome: outcome.clone(),
+                })?;
+            outcome.skipped_reason = Some("rules_only_fallback".to_string());
+            return Ok(outcome);
         }
         unknown => Err(format!("Unknown AI provider: {}", unknown)),
     };
 
     match classify_result {
         Ok(classifications) => {
-            classified += db.update_classifications_batch(&classifications)?;
-            Ok((classified, None))
+            outcome.ai_succeeded = outcome.ai_attempted;
+            outcome.classified +=
+                db.update_classifications_batch(&classifications)
+                    .map_err(|e| ClassifyFailure {
+                        error: e,
+                        outcome: outcome.clone(),
+                    })?;
+            Ok(outcome)
         }
-        Err(err) => Ok((classified, Some(err))),
+        Err(err) => {
+            outcome.warning = Some(err);
+            Ok(outcome)
+        }
     }
 }
 
@@ -355,12 +563,29 @@ pub async fn refresh_inbox(
     let rules = settings.effective_rules();
     let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
     let system_prompt = build_classification_prompt(&categories);
+    let run_id = next_run_id()?;
+    let provider_requested = normalize_provider_label(settings.ai_provider.as_deref());
+    let pending_before_refresh = state.db.get_unclassified_inbox_count().unwrap_or(0);
+    let refresh_started_at = Instant::now();
     let mut result = RefreshResult {
         in_progress: true,
         progress_percent: 12,
         ..empty_refresh_result()
     };
     let mut delta_ids: Vec<String> = Vec::new();
+    log_diagnostic(
+        &state.db,
+        Some(&run_id),
+        "refresh",
+        "info",
+        "refresh_started",
+        "Refresh started",
+        metadata_from_json(json!({
+            "provider_requested": provider_requested.clone(),
+            "provider_used": provider_requested.clone(),
+            "pending_before": pending_before_refresh
+        })),
+    );
 
     // Fetch from Slack
     if let (Some(ref token), Some(ref cookie)) = (&settings.slack_token, &settings.slack_cookie) {
@@ -541,28 +766,172 @@ pub async fn refresh_inbox(
         AtomicFlagGuard::acquire(state.backlog_classify_in_progress.clone());
 
     let classify_start = Instant::now();
-    if !delta_ids.is_empty() {
-        if classification_guard.is_some() {
-            match classify_message_ids(
-                &state.db,
-                &delta_ids,
-                &categories,
-                &rules,
-                settings.ai_provider.as_deref(),
-                settings.claude_api_key.as_deref(),
-                settings.openai_api_key.as_deref(),
-                &category_names,
-                &system_prompt,
-            )
-            .await
-            {
-                Ok((n, err)) => {
-                    result.classified += n;
-                    if let Some(err) = err {
-                        result.errors.push(format!("Classifier: {}", err));
-                    }
+    let pending_before_classify = state.db.get_unclassified_inbox_count().unwrap_or(0);
+    if delta_ids.is_empty() {
+        log_diagnostic(
+            &state.db,
+            Some(&run_id),
+            "categorization",
+            "info",
+            "classify_skipped",
+            "Classification skipped",
+            metadata_from_json(json!({
+                "phase": "foreground",
+                "provider_requested": provider_requested.clone(),
+                "provider_used": provider_requested.clone(),
+                "rules_matched_count": 0,
+                "ai_attempted": false,
+                "reason": "no_delta_ids",
+                "pending_before": pending_before_classify,
+                "pending_after": pending_before_classify,
+                "batch_size": 0
+            })),
+        );
+    } else if classification_guard.is_none() {
+        log_diagnostic(
+            &state.db,
+            Some(&run_id),
+            "categorization",
+            "warn",
+            "classify_skipped",
+            "Classification skipped while another pass is active",
+            metadata_from_json(json!({
+                "phase": "foreground",
+                "provider_requested": provider_requested.clone(),
+                "provider_used": provider_requested.clone(),
+                "rules_matched_count": 0,
+                "ai_attempted": false,
+                "reason": "classifier_busy",
+                "pending_before": pending_before_classify,
+                "pending_after": pending_before_classify,
+                "batch_size": delta_ids.len()
+            })),
+        );
+    } else {
+        log_diagnostic(
+            &state.db,
+            Some(&run_id),
+            "categorization",
+            "info",
+            "classify_started",
+            "Classification started",
+            metadata_from_json(json!({
+                "phase": "foreground",
+                "provider_requested": provider_requested.clone(),
+                "provider_used": provider_requested.clone(),
+                "rules_matched_count": 0,
+                "ai_attempted": false,
+                "pending_before": pending_before_classify,
+                "batch_size": delta_ids.len()
+            })),
+        );
+
+        match classify_message_ids(
+            &state.db,
+            &delta_ids,
+            &categories,
+            &rules,
+            settings.ai_provider.as_deref(),
+            settings.claude_api_key.as_deref(),
+            settings.openai_api_key.as_deref(),
+            &category_names,
+            &system_prompt,
+        )
+        .await
+        {
+            Ok(outcome) => {
+                result.classified += outcome.classified;
+                let pending_after = state.db.get_unclassified_inbox_count().unwrap_or(0);
+                let duration_ms = classify_start.elapsed().as_millis() as u64;
+
+                if let Some(ref warning) = outcome.warning {
+                    result.errors.push(format!("Classifier: {}", warning));
+                    log_diagnostic(
+                        &state.db,
+                        Some(&run_id),
+                        "categorization",
+                        "warn",
+                        "classify_warning",
+                        "Classification completed with warning",
+                        metadata_from_json(json!({
+                            "phase": "foreground",
+                            "provider_requested": outcome.provider_requested,
+                            "provider_used": outcome.provider_used,
+                            "rules_matched_count": outcome.rules_matched_count,
+                            "ai_attempted": outcome.ai_attempted,
+                            "ai_succeeded": outcome.ai_succeeded,
+                            "classified_count": outcome.classified,
+                            "pending_before": pending_before_classify,
+                            "pending_after": pending_after,
+                            "duration_ms": duration_ms,
+                            "batch_size": outcome.batch_size,
+                            "error": warning
+                        })),
+                    );
+                } else if let Some(reason) = outcome.skipped_reason {
+                    log_diagnostic(
+                        &state.db,
+                        Some(&run_id),
+                        "categorization",
+                        "info",
+                        "classify_skipped",
+                        "Classification skipped",
+                        metadata_from_json(json!({
+                            "phase": "foreground",
+                            "provider_requested": outcome.provider_requested,
+                            "provider_used": outcome.provider_used,
+                            "rules_matched_count": outcome.rules_matched_count,
+                            "ai_attempted": outcome.ai_attempted,
+                            "reason": reason,
+                            "pending_before": pending_before_classify,
+                            "pending_after": pending_after,
+                            "batch_size": outcome.batch_size
+                        })),
+                    );
+                } else {
+                    log_diagnostic(
+                        &state.db,
+                        Some(&run_id),
+                        "categorization",
+                        "info",
+                        "classify_completed",
+                        "Classification completed",
+                        metadata_from_json(json!({
+                            "phase": "foreground",
+                            "provider_requested": outcome.provider_requested,
+                            "provider_used": outcome.provider_used,
+                            "rules_matched_count": outcome.rules_matched_count,
+                            "ai_attempted": outcome.ai_attempted,
+                            "ai_succeeded": outcome.ai_succeeded,
+                            "classified_count": outcome.classified,
+                            "pending_before": pending_before_classify,
+                            "pending_after": pending_after,
+                            "duration_ms": duration_ms,
+                            "batch_size": outcome.batch_size
+                        })),
+                    );
                 }
-                Err(e) => result.errors.push(format!("Classifier: {}", e)),
+            }
+            Err(failure) => {
+                result.classified += failure.outcome.classified;
+                result.errors.push(format!("Classifier: {}", failure.error));
+                let pending_after = state.db.get_unclassified_inbox_count().unwrap_or(0);
+                log_diagnostic(
+                    &state.db,
+                    Some(&run_id),
+                    "categorization",
+                    "error",
+                    "classify_failed",
+                    "Classification failed",
+                    classify_failed_metadata(
+                        "foreground",
+                        pending_before_classify,
+                        pending_after,
+                        classify_start.elapsed().as_millis() as u64,
+                        &failure.outcome,
+                        &failure.error,
+                    ),
+                );
             }
         }
     }
@@ -586,6 +955,7 @@ pub async fn refresh_inbox(
             let ai_provider = settings.ai_provider.clone();
             let claude_api_key = settings.claude_api_key.clone();
             let openai_api_key = settings.openai_api_key.clone();
+            let run_id = run_id.clone();
             tokio::spawn(async move {
                 let _guard = backlog_guard;
                 let mut total_classified = 0usize;
@@ -603,6 +973,26 @@ pub async fn refresh_inbox(
                     }
 
                     let ids: Vec<String> = batch.into_iter().map(|m| m.id).collect();
+                    let pending_before = db.get_unclassified_inbox_count().unwrap_or(0);
+                    let started_at = Instant::now();
+                    let requested_provider = normalize_provider_label(ai_provider.as_deref());
+                    log_diagnostic(
+                        &db,
+                        Some(&run_id),
+                        "categorization",
+                        "info",
+                        "classify_started",
+                        "Backlog classification started",
+                        metadata_from_json(json!({
+                            "phase": "backlog",
+                            "provider_requested": requested_provider.clone(),
+                            "provider_used": requested_provider.clone(),
+                            "rules_matched_count": 0,
+                            "ai_attempted": false,
+                            "pending_before": pending_before,
+                            "batch_size": ids.len()
+                        })),
+                    );
                     match classify_message_ids(
                         &db,
                         &ids,
@@ -616,21 +1006,110 @@ pub async fn refresh_inbox(
                     )
                     .await
                     {
-                        Ok((n, err)) => {
-                            total_classified += n;
-                            if let Some(err) = err {
+                        Ok(outcome) => {
+                            total_classified += outcome.classified;
+                            let pending_after = db.get_unclassified_inbox_count().unwrap_or(0);
+                            let duration_ms = started_at.elapsed().as_millis() as u64;
+                            if let Some(err) = outcome.warning {
                                 eprintln!("[haystack] Backlog classifier warning: {}", err);
+                                log_diagnostic(
+                                    &db,
+                                    Some(&run_id),
+                                    "categorization",
+                                    "warn",
+                                    "classify_warning",
+                                    "Backlog classification warning",
+                                    metadata_from_json(json!({
+                                        "phase": "backlog",
+                                        "provider_requested": outcome.provider_requested,
+                                        "provider_used": outcome.provider_used,
+                                        "rules_matched_count": outcome.rules_matched_count,
+                                        "ai_attempted": outcome.ai_attempted,
+                                        "ai_succeeded": outcome.ai_succeeded,
+                                        "classified_count": outcome.classified,
+                                        "pending_before": pending_before,
+                                        "pending_after": pending_after,
+                                        "duration_ms": duration_ms,
+                                        "batch_size": outcome.batch_size,
+                                        "error": err
+                                    })),
+                                );
                                 break;
                             }
-                            if n == 0 {
+                            if let Some(reason) = outcome.skipped_reason {
+                                log_diagnostic(
+                                    &db,
+                                    Some(&run_id),
+                                    "categorization",
+                                    "info",
+                                    "classify_skipped",
+                                    "Backlog classification skipped",
+                                    metadata_from_json(json!({
+                                        "phase": "backlog",
+                                        "provider_requested": outcome.provider_requested,
+                                        "provider_used": outcome.provider_used,
+                                        "rules_matched_count": outcome.rules_matched_count,
+                                        "ai_attempted": outcome.ai_attempted,
+                                        "reason": reason,
+                                        "pending_before": pending_before,
+                                        "pending_after": pending_after,
+                                        "batch_size": outcome.batch_size
+                                    })),
+                                );
+                            } else {
+                                log_diagnostic(
+                                    &db,
+                                    Some(&run_id),
+                                    "categorization",
+                                    "info",
+                                    "classify_completed",
+                                    "Backlog classification completed",
+                                    metadata_from_json(json!({
+                                        "phase": "backlog",
+                                        "provider_requested": outcome.provider_requested,
+                                        "provider_used": outcome.provider_used,
+                                        "rules_matched_count": outcome.rules_matched_count,
+                                        "ai_attempted": outcome.ai_attempted,
+                                        "ai_succeeded": outcome.ai_succeeded,
+                                        "classified_count": outcome.classified,
+                                        "pending_before": pending_before,
+                                        "pending_after": pending_after,
+                                        "duration_ms": duration_ms,
+                                        "batch_size": outcome.batch_size
+                                    })),
+                                );
+                            }
+
+                            if outcome.classified == 0 {
                                 eprintln!(
                                     "[haystack] Backlog classification made no progress; stopping background pass"
                                 );
                                 break;
                             }
                         }
-                        Err(e) => {
-                            eprintln!("[haystack] Backlog classification failed: {}", e);
+                        Err(failure) => {
+                            eprintln!(
+                                "[haystack] Backlog classification failed: {}",
+                                failure.error
+                            );
+                            total_classified += failure.outcome.classified;
+                            let pending_after = db.get_unclassified_inbox_count().unwrap_or(0);
+                            log_diagnostic(
+                                &db,
+                                Some(&run_id),
+                                "categorization",
+                                "error",
+                                "classify_failed",
+                                "Backlog classification failed",
+                                classify_failed_metadata(
+                                    "backlog",
+                                    pending_before,
+                                    pending_after,
+                                    started_at.elapsed().as_millis() as u64,
+                                    &failure.outcome,
+                                    &failure.error,
+                                ),
+                            );
                             break;
                         }
                     }
@@ -657,39 +1136,28 @@ pub async fn refresh_inbox(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(|e| e.to_string())?
                     .as_secs();
-                now - cached_at > 86400
+                now.saturating_sub(cached_at) > 86400
             }
             None => true,
         };
         if needs_refresh {
-            let db_ch = state.db.clone();
-            let db_us = state.db.clone();
-            let db_ts = state.db.clone();
+            let db = state.db.clone();
             let token = token.clone();
             let cookie = cookie.clone();
-            let token2 = token.clone();
-            let cookie2 = cookie.clone();
             tokio::spawn(async move {
-                let (ch, us) = tokio::join!(
-                    slack::fetch_slack_channels_paged(&token, &cookie, |page| {
-                        db_ch.append_slack_channels(page)
-                    }),
-                    slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
-                        db_us.append_slack_users(page)
-                    })
-                );
-                if let Err(ref e) = ch {
-                    eprintln!("[haystack] Slack channel cache refresh failed: {}", e);
-                }
-                if let Err(ref e) = us {
-                    eprintln!("[haystack] Slack user cache refresh failed: {}", e);
-                }
-                if ch.is_ok() && us.is_ok() {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let _ = db_ts.set_setting("cache_last_populated", &now.to_string());
+                match fetch_slack_cache_snapshot(&token, &cookie).await {
+                    Ok((channels, users)) => {
+                        if let Err(e) = db.replace_slack_cache(&channels, &users) {
+                            eprintln!("[haystack] Slack cache replace failed: {}", e);
+                            return;
+                        }
+                        if let Ok(now) = now_epoch_u64() {
+                            let _ = db.set_setting("cache_last_populated", &now.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[haystack] Slack cache refresh failed: {}", e);
+                    }
                 }
             });
         }
@@ -725,6 +1193,50 @@ pub async fn refresh_inbox(
     {
         let mut snapshot = state.last_refresh_result.write().await;
         *snapshot = result.clone();
+    }
+
+    let refresh_duration_ms = refresh_started_at.elapsed().as_millis() as u64;
+    if result.errors.is_empty() {
+        log_diagnostic(
+            &state.db,
+            Some(&run_id),
+            "refresh",
+            "info",
+            "refresh_completed",
+            "Refresh completed",
+            metadata_from_json(json!({
+                "provider_requested": provider_requested.clone(),
+                "provider_used": provider_requested.clone(),
+                "new_messages": result.new_messages,
+                "classified_count": result.classified,
+                "pending_before": pending_before_refresh,
+                "pending_after": result.pending_classification,
+                "duration_ms": refresh_duration_ms,
+                "slack_fetch_ms": result.slack_fetch_ms,
+                "db_write_ms": result.db_write_ms,
+                "classify_ms": result.classify_ms,
+                "avatar_ms": result.avatar_ms,
+                "error_count": 0
+            })),
+        );
+    } else {
+        log_diagnostic(
+            &state.db,
+            Some(&run_id),
+            "refresh",
+            "error",
+            "refresh_failed",
+            "Refresh completed with errors",
+            metadata_from_json(json!({
+                "provider_requested": provider_requested.clone(),
+                "provider_used": provider_requested.clone(),
+                "pending_before": pending_before_refresh,
+                "pending_after": result.pending_classification,
+                "duration_ms": refresh_duration_ms,
+                "error_count": result.errors.len(),
+                "error": result.errors.first().cloned().unwrap_or_default()
+            })),
+        );
     }
 
     Ok(result)
@@ -846,8 +1358,38 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 }
 
 #[tauri::command]
-pub async fn get_codex_status() -> Result<CodexStatus, String> {
-    Ok(classifier::get_codex_status().await)
+pub async fn get_codex_status(state: State<'_, AppState>) -> Result<CodexStatus, String> {
+    let started = Instant::now();
+    let status = classifier::get_codex_status().await;
+    log_diagnostic(
+        &state.db,
+        None,
+        "categorization",
+        "info",
+        "codex_status_checked",
+        "Codex status checked",
+        codex_status_log_metadata(&status, started.elapsed().as_millis() as u64),
+    );
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn get_diagnostic_logs(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    scope: Option<String>,
+) -> Result<Vec<DiagnosticLogEntry>, String> {
+    let limit = limit
+        .unwrap_or(DEFAULT_LOG_FETCH_LIMIT)
+        .max(1)
+        .min(MAX_LOG_ENTRIES);
+    let scope = scope.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    state.db.get_diagnostic_logs(limit, scope)
+}
+
+#[tauri::command]
+pub async fn clear_diagnostic_logs(state: State<'_, AppState>) -> Result<(), String> {
+    state.db.clear_diagnostic_logs()
 }
 
 #[tauri::command]
@@ -880,39 +1422,65 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
         .ok_or("Slack cookie not configured")?
         .to_string();
 
-    state.db.clear_slack_cache()?;
-
-    let db_channels = state.db.clone();
-    let db_users = state.db.clone();
-    let db_dms = state.db.clone();
-    let token2 = token.clone();
-    let cookie2 = cookie.clone();
     let token3 = token.clone();
     let cookie3 = cookie.clone();
+    let token4 = token.clone();
+    let cookie4 = cookie.clone();
 
-    let (channels_result, users_result, dms_result) = tokio::join!(
-        slack::fetch_slack_channels_paged(&token, &cookie, |page| {
-            db_channels.append_slack_channels(page)
-        }),
-        slack::fetch_slack_users_paged(&token2, &cookie2, |page| {
-            db_users.append_slack_users(page)
-        }),
-        slack::fetch_recent_dm_user_ids(&token3, &cookie3, 20)
+    let (cache_snapshot_result, dms_result, channel_suggestions_result) = tokio::join!(
+        fetch_slack_cache_snapshot(&token, &cookie),
+        slack::fetch_recent_dm_user_ids(
+            &token3,
+            &cookie3,
+            ONBOARDING_DM_SUGGESTION_LIMIT,
+            SLACK_CACHE_RETRY_ATTEMPTS,
+        ),
+        slack::fetch_recent_to_me_channels(
+            &token4,
+            &cookie4,
+            ONBOARDING_CHANNEL_SUGGESTION_LIMIT,
+            ONBOARDING_CHANNEL_SUGGESTION_PAGES,
+            SLACK_CACHE_RETRY_ATTEMPTS,
+        )
     );
 
-    channels_result?;
-    users_result?;
+    let (channels, users) = cache_snapshot_result?;
+    state.db.replace_slack_cache(&channels, &users)?;
 
-    // Save DM user IDs for onboarding suggestions (best-effort)
+    // Save DM/channel IDs for onboarding suggestions (best-effort).
     if let Ok(dm_ids) = dms_result {
-        let _ = db_dms.save_suggested_dm_user_ids(&dm_ids);
+        let dm_ids = unique_ids_with_limit(dm_ids, ONBOARDING_DM_SUGGESTION_LIMIT);
+        let _ = state.db.save_suggested_dm_user_ids(&dm_ids);
+    }
+    let suggested_channel_ids = if let Ok(channel_suggestions) = channel_suggestions_result {
+        unique_ids_with_limit(
+            channel_suggestions
+                .into_iter()
+                .map(|channel| channel.id)
+                .collect::<Vec<_>>(),
+            ONBOARDING_CHANNEL_SUGGESTION_LIMIT,
+        )
+    } else {
+        let mut fallback_channels = channels.clone();
+        fallback_channels.sort_by(|a, b| {
+            b.updated
+                .partial_cmp(&a.updated)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        unique_ids_with_limit(
+            fallback_channels
+                .into_iter()
+                .map(|channel| channel.id)
+                .collect::<Vec<_>>(),
+            ONBOARDING_CHANNEL_SUGGESTION_LIMIT,
+        )
+    };
+    if !suggested_channel_ids.is_empty() {
+        let _ = state.db.save_suggested_channel_ids(&suggested_channel_ids);
     }
 
     // Record cache timestamp
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
+    let now = now_epoch_u64()?;
     state
         .db
         .set_setting("cache_last_populated", &now.to_string())?;
@@ -924,9 +1492,38 @@ pub async fn populate_slack_cache(state: State<'_, AppState>) -> Result<SlackCac
 pub async fn get_onboarding_suggestions(
     state: State<'_, AppState>,
 ) -> Result<OnboardingSuggestions, String> {
-    let dm_user_ids = state.db.get_suggested_dm_user_ids()?;
+    let raw_dm_ids = state.db.get_suggested_dm_user_ids()?;
+    let dm_user_ids = unique_ids_with_limit(raw_dm_ids.clone(), ONBOARDING_DM_SUGGESTION_LIMIT);
+    if dm_user_ids != raw_dm_ids {
+        let _ = state.db.save_suggested_dm_user_ids(&dm_user_ids);
+    }
+
     let suggested_people = state.db.get_slack_users_by_ids(&dm_user_ids)?;
-    let suggested_channels = state.db.get_suggested_channels(15)?;
+
+    let raw_channel_ids = state.db.get_suggested_channel_ids()?;
+    let channel_ids =
+        unique_ids_with_limit(raw_channel_ids.clone(), ONBOARDING_CHANNEL_SUGGESTION_LIMIT);
+    if channel_ids != raw_channel_ids {
+        let _ = state.db.save_suggested_channel_ids(&channel_ids);
+    }
+
+    let mut suggested_channels = state.db.get_slack_channels_by_ids(&channel_ids)?;
+    if suggested_channels.len() < ONBOARDING_CHANNEL_SUGGESTION_LIMIT {
+        let mut seen_channel_ids: HashSet<String> =
+            suggested_channels.iter().map(|ch| ch.id.clone()).collect();
+        for ch in state
+            .db
+            .get_suggested_channels(ONBOARDING_CHANNEL_SUGGESTION_LIMIT * 4)?
+        {
+            if seen_channel_ids.insert(ch.id.clone()) {
+                suggested_channels.push(ch);
+            }
+            if suggested_channels.len() >= ONBOARDING_CHANNEL_SUGGESTION_LIMIT {
+                break;
+            }
+        }
+    }
+
     Ok(OnboardingSuggestions {
         suggested_people,
         suggested_channels,
@@ -1011,4 +1608,266 @@ pub async fn set_window_theme(app: tauri::AppHandle, theme: String) -> Result<()
         _ => Some(tauri::Theme::Dark),
     };
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn sample_categories() -> Vec<Category> {
+        vec![
+            Category {
+                name: "important".to_string(),
+                builtin: true,
+                position: 0,
+                description: Some("Needs attention".to_string()),
+            },
+            Category {
+                name: "other".to_string(),
+                builtin: true,
+                position: 1,
+                description: None,
+            },
+        ]
+    }
+
+    fn sample_message(id: &str, body: &str) -> Message {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_secs() as i64;
+        Message {
+            id: id.to_string(),
+            source: "slack".to_string(),
+            sender: "alice".to_string(),
+            subject: Some("general".to_string()),
+            body: body.to_string(),
+            body_html: None,
+            permalink: None,
+            avatar_url: None,
+            timestamp: now,
+            classification: "unclassified".to_string(),
+            status: "inbox".to_string(),
+            starred: false,
+            unread: true,
+            snoozed_until: None,
+            created_at: now,
+        }
+    }
+
+    #[test]
+    fn codex_status_log_metadata_includes_error_when_unavailable() {
+        let status = CodexStatus {
+            installed: false,
+            authenticated: false,
+            auth_mode: None,
+            has_codex_subscription: false,
+            message: "Codex CLI is not installed".to_string(),
+        };
+        let metadata = codex_status_log_metadata(&status, 42);
+        assert_eq!(metadata.get("provider_used"), Some(&json!("codex")));
+        assert_eq!(metadata.get("installed"), Some(&json!(false)));
+        assert_eq!(
+            metadata.get("error"),
+            Some(&json!("Codex CLI is not installed"))
+        );
+    }
+
+    #[test]
+    fn classify_failed_metadata_uses_real_outcome_fields() {
+        let outcome = ClassifyOutcome {
+            classified: 3,
+            rules_matched_count: 1,
+            ai_attempted: true,
+            ai_succeeded: false,
+            provider_requested: "codex".to_string(),
+            provider_used: "codex".to_string(),
+            warning: None,
+            skipped_reason: None,
+            batch_size: 5,
+        };
+
+        let metadata =
+            classify_failed_metadata("foreground", 10, 7, 420, &outcome, "db_write_failed");
+
+        assert_eq!(metadata.get("provider_requested"), Some(&json!("codex")));
+        assert_eq!(metadata.get("provider_used"), Some(&json!("codex")));
+        assert_eq!(metadata.get("rules_matched_count"), Some(&json!(1)));
+        assert_eq!(metadata.get("ai_attempted"), Some(&json!(true)));
+        assert_eq!(metadata.get("ai_succeeded"), Some(&json!(false)));
+        assert_eq!(metadata.get("classified_count"), Some(&json!(3)));
+        assert_eq!(metadata.get("pending_before"), Some(&json!(10)));
+        assert_eq!(metadata.get("pending_after"), Some(&json!(7)));
+        assert_eq!(metadata.get("duration_ms"), Some(&json!(420)));
+        assert_eq!(metadata.get("batch_size"), Some(&json!(5)));
+        assert_eq!(metadata.get("error"), Some(&json!("db_write_failed")));
+    }
+
+    #[test]
+    fn diagnostic_events_share_run_id_across_refresh_cycle() {
+        let db = Database::new(":memory:").expect("db init");
+        let run_id = "refresh-1700000000-1";
+
+        log_diagnostic(
+            &db,
+            Some(run_id),
+            "refresh",
+            "info",
+            "refresh_started",
+            "Refresh started",
+            metadata_from_json(json!({
+                "provider_requested": "codex",
+                "provider_used": "codex",
+                "pending_before": 2
+            })),
+        );
+        log_diagnostic(
+            &db,
+            Some(run_id),
+            "categorization",
+            "info",
+            "classify_started",
+            "Classification started",
+            metadata_from_json(json!({
+                "phase": "foreground",
+                "provider_requested": "codex",
+                "provider_used": "codex",
+                "rules_matched_count": 0,
+                "ai_attempted": false,
+                "pending_before": 2,
+                "batch_size": 2
+            })),
+        );
+        log_diagnostic(
+            &db,
+            Some(run_id),
+            "categorization",
+            "info",
+            "classify_completed",
+            "Classification completed",
+            metadata_from_json(json!({
+                "phase": "foreground",
+                "provider_requested": "codex",
+                "provider_used": "codex",
+                "rules_matched_count": 0,
+                "ai_attempted": true,
+                "ai_succeeded": true,
+                "classified_count": 2,
+                "pending_before": 2,
+                "pending_after": 0,
+                "duration_ms": 120,
+                "batch_size": 2
+            })),
+        );
+        log_diagnostic(
+            &db,
+            Some(run_id),
+            "refresh",
+            "info",
+            "refresh_completed",
+            "Refresh completed",
+            metadata_from_json(json!({
+                "provider_requested": "codex",
+                "provider_used": "codex",
+                "new_messages": 2,
+                "classified_count": 2,
+                "pending_before": 2,
+                "pending_after": 0,
+                "duration_ms": 800,
+                "slack_fetch_ms": 300,
+                "db_write_ms": 120,
+                "classify_ms": 180,
+                "avatar_ms": 20,
+                "error_count": 0
+            })),
+        );
+
+        let logs = db.get_diagnostic_logs(20, None).expect("fetch logs");
+        assert_eq!(logs.len(), 4);
+        assert!(
+            logs.iter().all(|log| log.run_id.as_deref() == Some(run_id)),
+            "all logs should share the same run_id"
+        );
+    }
+
+    #[test]
+    fn classify_message_ids_rules_only_fallback_classifies_remaining_messages() {
+        let db = Database::new(":memory:").expect("db init");
+        let message = sample_message("m-rules-only", "normal update");
+        db.insert_message(&message).expect("insert message");
+
+        let categories = sample_categories();
+        let rules: Vec<CategoryRule> = Vec::new();
+        let ids = vec![message.id.clone()];
+        let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
+        let system_prompt = build_classification_prompt(&categories);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+        let outcome = rt
+            .block_on(classify_message_ids(
+                &db,
+                &ids,
+                &categories,
+                &rules,
+                None,
+                None,
+                None,
+                &category_names,
+                &system_prompt,
+            ))
+            .expect("classify outcome");
+
+        assert_eq!(outcome.classified, 1);
+        assert_eq!(outcome.rules_matched_count, 0);
+        assert!(!outcome.ai_attempted);
+        assert!(!outcome.ai_succeeded);
+        assert_eq!(outcome.provider_used, "rules_only");
+        assert_eq!(
+            outcome.skipped_reason.as_deref(),
+            Some("rules_only_fallback")
+        );
+        assert!(outcome.warning.is_none());
+        assert_eq!(db.get_unclassified_inbox_count().expect("count"), 0);
+    }
+
+    #[test]
+    fn classify_message_ids_unknown_provider_reports_warning_without_ai_attempt() {
+        let db = Database::new(":memory:").expect("db init");
+        let message = sample_message("m-unknown-provider", "status update");
+        db.insert_message(&message).expect("insert message");
+
+        let categories = sample_categories();
+        let rules: Vec<CategoryRule> = Vec::new();
+        let ids = vec![message.id.clone()];
+        let category_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
+        let system_prompt = build_classification_prompt(&categories);
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+        let outcome = rt
+            .block_on(classify_message_ids(
+                &db,
+                &ids,
+                &categories,
+                &rules,
+                Some("mystery-provider"),
+                None,
+                None,
+                &category_names,
+                &system_prompt,
+            ))
+            .expect("classify outcome");
+
+        assert_eq!(outcome.classified, 0);
+        assert_eq!(outcome.rules_matched_count, 0);
+        assert!(!outcome.ai_attempted);
+        assert!(!outcome.ai_succeeded);
+        assert!(outcome.skipped_reason.is_none());
+        assert!(outcome
+            .warning
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Unknown AI provider"));
+        assert_eq!(db.get_unclassified_inbox_count().expect("count"), 1);
+    }
 }

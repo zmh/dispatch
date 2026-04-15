@@ -3,9 +3,14 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::diagnostics::{
+    sanitize_diagnostic_event, sanitize_scope_filter, DiagnosticEventInput, DEDUPE_WINDOW_SECONDS,
+    MAX_LOG_ENTRIES,
+};
 use crate::models::{
-    Category, CategoryRule, Message, MessageCounts, SaveSettingsResult, Settings, SlackCacheStatus,
-    SlackChannel, SlackFilter, SlackUser, DEFAULT_IMPORTANT_DESCRIPTION,
+    Category, CategoryRule, DiagnosticLogEntry, Message, MessageCounts, SaveSettingsResult,
+    Settings, SlackCacheStatus, SlackChannel, SlackFilter, SlackUser,
+    DEFAULT_IMPORTANT_DESCRIPTION,
 };
 
 pub struct Database {
@@ -66,9 +71,25 @@ impl Database {
                 is_private INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS diagnostic_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                run_id TEXT,
+                scope TEXT NOT NULL,
+                level TEXT NOT NULL,
+                event TEXT NOT NULL,
+                message TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                suppressed_count INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
             CREATE INDEX IF NOT EXISTS idx_messages_classification ON messages(classification);
-            CREATE INDEX IF NOT EXISTS idx_messages_snoozed ON messages(snoozed_until);",
+            CREATE INDEX IF NOT EXISTS idx_messages_snoozed ON messages(snoozed_until);
+            CREATE INDEX IF NOT EXISTS idx_diagnostic_logs_ts ON diagnostic_logs(ts DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_diagnostic_logs_scope ON diagnostic_logs(scope);
+            CREATE INDEX IF NOT EXISTS idx_diagnostic_logs_fingerprint_ts ON diagnostic_logs(fingerprint, ts DESC, id DESC);",
         )
         .map_err(|e| e.to_string())?;
 
@@ -687,6 +708,173 @@ impl Database {
         Ok(updated)
     }
 
+    pub fn insert_diagnostic_log(&self, event: DiagnosticEventInput) -> Result<(), String> {
+        let Some(sanitized) = sanitize_diagnostic_event(event) else {
+            return Ok(());
+        };
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs() as i64;
+        let dedupe_since = now.saturating_sub(DEDUPE_WINDOW_SECONDS);
+        let metadata_json =
+            serde_json::to_string(&sanitized.metadata).map_err(|e| e.to_string())?;
+        let error_code = sanitized
+            .error_code
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        let provider_used = sanitized
+            .provider_used
+            .as_deref()
+            .unwrap_or("none")
+            .to_string();
+        let fingerprint = format!(
+            "{}|{}|{}|{}",
+            sanitized.scope, sanitized.event, error_code, provider_used
+        );
+
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let dedupe_enabled = sanitized.level != "info";
+        let existing_id: Option<i64> = if dedupe_enabled {
+            conn.query_row(
+                "SELECT id
+                 FROM diagnostic_logs
+                 WHERE fingerprint = ?1 AND ts >= ?2
+                 ORDER BY ts DESC, id DESC
+                 LIMIT 1",
+                params![fingerprint, dedupe_since],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+        } else {
+            None
+        };
+
+        if let Some(id) = existing_id {
+            conn.execute(
+                "UPDATE diagnostic_logs
+                 SET ts = ?2,
+                     run_id = ?3,
+                     scope = ?4,
+                     level = ?5,
+                     event = ?6,
+                     message = ?7,
+                     metadata_json = ?8,
+                     fingerprint = ?9,
+                     suppressed_count = suppressed_count + 1
+                 WHERE id = ?1",
+                params![
+                    id,
+                    now,
+                    sanitized.run_id,
+                    sanitized.scope,
+                    sanitized.level,
+                    sanitized.event,
+                    sanitized.message,
+                    metadata_json,
+                    fingerprint
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "INSERT INTO diagnostic_logs (ts, run_id, scope, level, event, message, metadata_json, fingerprint, suppressed_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+                params![
+                    now,
+                    sanitized.run_id,
+                    sanitized.scope,
+                    sanitized.level,
+                    sanitized.event,
+                    sanitized.message,
+                    metadata_json,
+                    fingerprint
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        conn.execute(
+            "DELETE FROM diagnostic_logs
+             WHERE id NOT IN (
+                SELECT id
+                FROM diagnostic_logs
+                ORDER BY ts DESC, id DESC
+                LIMIT ?1
+             )",
+            params![MAX_LOG_ENTRIES as i64],
+        )
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    pub fn get_diagnostic_logs(
+        &self,
+        limit: usize,
+        scope: Option<&str>,
+    ) -> Result<Vec<DiagnosticLogEntry>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let capped_limit = limit.max(1).min(MAX_LOG_ENTRIES) as i64;
+        let scope = sanitize_scope_filter(scope);
+
+        let (sql, params_vec): (&str, Vec<&dyn rusqlite::types::ToSql>) = match scope {
+            Some(ref scope_value) => (
+                "SELECT id, ts, run_id, scope, level, event, message, metadata_json, suppressed_count
+                 FROM diagnostic_logs
+                 WHERE scope = ?1
+                 ORDER BY ts DESC, id DESC
+                 LIMIT ?2",
+                vec![
+                    scope_value as &dyn rusqlite::types::ToSql,
+                    &capped_limit as &dyn rusqlite::types::ToSql,
+                ],
+            ),
+            None => (
+                "SELECT id, ts, run_id, scope, level, event, message, metadata_json, suppressed_count
+                 FROM diagnostic_logs
+                 ORDER BY ts DESC, id DESC
+                 LIMIT ?1",
+                vec![&capped_limit as &dyn rusqlite::types::ToSql],
+            ),
+        };
+
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params_vec.as_slice(), |row| {
+                let metadata_json: String = row.get(7)?;
+                let metadata = serde_json::from_str::<serde_json::Value>(&metadata_json)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                let suppressed_count: i64 = row.get(8)?;
+                Ok(DiagnosticLogEntry {
+                    id: row.get(0)?,
+                    ts: row.get(1)?,
+                    run_id: row.get(2)?,
+                    scope: row.get(3)?,
+                    level: row.get(4)?,
+                    event: row.get(5)?,
+                    message: row.get(6)?,
+                    metadata,
+                    suppressed_count: suppressed_count.max(0) as usize,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(rows)
+    }
+
+    pub fn clear_diagnostic_logs(&self) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM diagnostic_logs", [])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let result = conn.query_row(
@@ -843,12 +1031,29 @@ impl Database {
     pub fn save_settings(&self, settings: &Settings) -> Result<SaveSettingsResult, String> {
         let mut classifications_reset = false;
         let mut filters_cleaned = false;
+        let old_slack_token = self.get_setting("slack_token")?;
+        let old_slack_cookie = self.get_setting("slack_cookie")?;
+        let mut slack_credentials_changed = false;
 
         if let Some(ref val) = settings.slack_token {
+            if old_slack_token.as_deref() != Some(val.as_str()) {
+                slack_credentials_changed = true;
+            }
             self.set_setting("slack_token", val)?;
         }
         if let Some(ref val) = settings.slack_cookie {
+            if old_slack_cookie.as_deref() != Some(val.as_str()) {
+                slack_credentials_changed = true;
+            }
             self.set_setting("slack_cookie", val)?;
+        }
+        if slack_credentials_changed {
+            self.clear_slack_cache()?;
+            let _ = self.delete_setting("cache_last_populated");
+            let _ = self.delete_setting("suggested_dm_user_ids");
+            let _ = self.delete_setting("suggested_channel_ids");
+            let _ = self.delete_setting("slack_team_id");
+            let _ = self.delete_setting("slack_incremental_state_v1");
         }
         match settings.ai_provider.as_deref().map(str::trim) {
             Some("") | None => self.delete_setting("ai_provider")?,
@@ -1044,12 +1249,55 @@ impl Database {
 
     // Slack cache methods
 
+    #[allow(dead_code)]
     pub fn clear_slack_cache(&self) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM slack_users_cache", [])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM slack_channels_cache", [])
             .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn replace_slack_cache(
+        &self,
+        channels: &[SlackChannel],
+        users: &[SlackUser],
+    ) -> Result<(), String> {
+        let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM slack_users_cache", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM slack_channels_cache", [])
+            .map_err(|e| e.to_string())?;
+
+        {
+            let mut user_stmt = tx
+                .prepare(
+                    "INSERT OR REPLACE INTO slack_users_cache (id, name, real_name, avatar_url) VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(|e| e.to_string())?;
+            for u in users {
+                user_stmt
+                    .execute(params![u.id, u.name, u.real_name, u.avatar_url])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        {
+            let mut channel_stmt = tx
+                .prepare(
+                    "INSERT OR REPLACE INTO slack_channels_cache (id, name, is_private, updated) VALUES (?1, ?2, ?3, ?4)",
+                )
+                .map_err(|e| e.to_string())?;
+            for ch in channels {
+                channel_stmt
+                    .execute(params![ch.id, ch.name, ch.is_private as i32, ch.updated])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -1272,6 +1520,40 @@ impl Database {
         Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
     }
 
+    pub fn get_slack_channels_by_ids(&self, ids: &[String]) -> Result<Vec<SlackChannel>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
+        let sql = format!(
+            "SELECT id, name, is_private, updated FROM slack_channels_cache WHERE id IN ({})",
+            placeholders.join(", ")
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(SlackChannel {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    is_private: row.get::<_, i32>(2)? != 0,
+                    updated: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        // Preserve input ordering (recency).
+        let map: HashMap<String, SlackChannel> =
+            rows.into_iter().map(|ch| (ch.id.clone(), ch)).collect();
+        Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
+    }
+
     pub fn get_suggested_channels(&self, limit: usize) -> Result<Vec<SlackChannel>, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -1310,6 +1592,18 @@ impl Database {
         }
     }
 
+    pub fn save_suggested_channel_ids(&self, ids: &[String]) -> Result<(), String> {
+        let json = serde_json::to_string(ids).map_err(|e| e.to_string())?;
+        self.set_setting("suggested_channel_ids", &json)
+    }
+
+    pub fn get_suggested_channel_ids(&self) -> Result<Vec<String>, String> {
+        match self.get_setting("suggested_channel_ids")? {
+            Some(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+            None => Ok(Vec::new()),
+        }
+    }
+
     pub fn slack_cache_count(&self) -> Result<SlackCacheStatus, String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         let user_count: usize = conn
@@ -1332,6 +1626,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Map, Value};
 
     fn sample_message(
         id: &str,
@@ -1530,6 +1825,66 @@ mod tests {
     }
 
     #[test]
+    fn save_settings_clears_slack_cache_when_credentials_change() {
+        let db = Database::new(":memory:").expect("db init");
+        let mut initial = Settings::default();
+        initial.slack_token = Some("xoxc-old".to_string());
+        initial.slack_cookie = Some("cookie-old".to_string());
+        db.save_settings(&initial).expect("seed settings");
+
+        db.append_slack_users(&[SlackUser {
+            id: "U123".to_string(),
+            name: "alice".to_string(),
+            real_name: "Alice".to_string(),
+            avatar_url: None,
+        }])
+        .expect("seed users cache");
+        db.append_slack_channels(&[SlackChannel {
+            id: "C123".to_string(),
+            name: "general".to_string(),
+            is_private: false,
+            updated: 1.0,
+        }])
+        .expect("seed channels cache");
+        db.set_setting("cache_last_populated", "1234")
+            .expect("seed cache timestamp");
+        db.save_suggested_dm_user_ids(&["U123".to_string()])
+            .expect("seed dm ids");
+        db.save_suggested_channel_ids(&["C123".to_string()])
+            .expect("seed channel ids");
+        db.set_setting("slack_team_id", "T123")
+            .expect("seed team id");
+        db.set_setting("slack_incremental_state_v1", "{\"queries\":{}}")
+            .expect("seed incremental state");
+
+        let mut updated = initial.clone();
+        updated.slack_token = Some("xoxc-new".to_string());
+        db.save_settings(&updated).expect("update settings");
+
+        let cache_counts = db.slack_cache_count().expect("cache counts");
+        assert_eq!(cache_counts.user_count, 0);
+        assert_eq!(cache_counts.channel_count, 0);
+        assert!(db
+            .get_suggested_dm_user_ids()
+            .expect("get dm ids")
+            .is_empty());
+        assert!(db
+            .get_suggested_channel_ids()
+            .expect("get channel ids")
+            .is_empty());
+        assert_eq!(
+            db.get_setting("cache_last_populated").expect("cache ts"),
+            None
+        );
+        assert_eq!(db.get_setting("slack_team_id").expect("team id"), None);
+        assert_eq!(
+            db.get_setting("slack_incremental_state_v1")
+                .expect("incremental state"),
+            None
+        );
+    }
+
+    #[test]
     fn rules_only_choice_stays_disabled_after_claude_migration() {
         let db = Database::new(":memory:").expect("db init");
         db.set_setting("claude_api_key", "sk-ant-test")
@@ -1547,5 +1902,161 @@ mod tests {
         // Must remain rules-only on subsequent reads.
         let reloaded = db.get_settings().expect("reload settings");
         assert_eq!(reloaded.ai_provider, None);
+    }
+
+    fn sample_diag_event(event: &str, scope: &str) -> DiagnosticEventInput {
+        let mut metadata = Map::new();
+        metadata.insert(
+            "provider_used".to_string(),
+            Value::String("codex".to_string()),
+        );
+        metadata.insert(
+            "provider_requested".to_string(),
+            Value::String("codex".to_string()),
+        );
+        metadata.insert(
+            "classified_count".to_string(),
+            Value::Number(serde_json::Number::from(1)),
+        );
+
+        DiagnosticEventInput {
+            run_id: Some("run-test".to_string()),
+            scope: scope.to_string(),
+            level: "info".to_string(),
+            event: event.to_string(),
+            message: "Test diagnostic event".to_string(),
+            metadata,
+        }
+    }
+
+    #[test]
+    fn diagnostic_logs_dedupe_increments_suppressed_count() {
+        let db = Database::new(":memory:").expect("db init");
+        let mut first = sample_diag_event("classify_failed", "categorization");
+        first.level = "error".to_string();
+        first.message = "Classification failed".to_string();
+        first.metadata.insert(
+            "error".to_string(),
+            Value::String("401 Unauthorized".to_string()),
+        );
+
+        db.insert_diagnostic_log(first.clone())
+            .expect("first insert");
+        db.insert_diagnostic_log(first).expect("second insert");
+
+        let logs = db.get_diagnostic_logs(10, None).expect("fetch logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].suppressed_count, 1);
+        assert_eq!(
+            logs[0].metadata.get("error_code"),
+            Some(&Value::String("auth_unauthorized".to_string()))
+        );
+    }
+
+    #[test]
+    fn diagnostic_logs_dedupe_updates_latest_run_context() {
+        let db = Database::new(":memory:").expect("db init");
+
+        let mut first = sample_diag_event("classify_failed", "categorization");
+        first.run_id = Some("run-a".to_string());
+        first.level = "error".to_string();
+        first.message = "Classification failed (first)".to_string();
+        first.metadata.insert(
+            "pending_after".to_string(),
+            Value::Number(serde_json::Number::from(9)),
+        );
+        first.metadata.insert(
+            "error".to_string(),
+            Value::String("401 Unauthorized".to_string()),
+        );
+
+        let mut second = sample_diag_event("classify_failed", "categorization");
+        second.run_id = Some("run-b".to_string());
+        second.level = "error".to_string();
+        second.message = "Classification failed (second)".to_string();
+        second.metadata.insert(
+            "pending_after".to_string(),
+            Value::Number(serde_json::Number::from(3)),
+        );
+        second.metadata.insert(
+            "error".to_string(),
+            Value::String("401 Unauthorized".to_string()),
+        );
+
+        db.insert_diagnostic_log(first).expect("first insert");
+        db.insert_diagnostic_log(second).expect("second insert");
+
+        let logs = db.get_diagnostic_logs(10, None).expect("fetch logs");
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].suppressed_count, 1);
+        assert_eq!(logs[0].run_id.as_deref(), Some("run-b"));
+        assert_eq!(logs[0].message, "Classification failed (second)");
+        assert_eq!(
+            logs[0].metadata.get("pending_after"),
+            Some(&Value::Number(serde_json::Number::from(3)))
+        );
+    }
+
+    #[test]
+    fn diagnostic_logs_enforce_retention_and_order() {
+        let db = Database::new(":memory:").expect("db init");
+        {
+            let conn = db.conn.lock().expect("conn lock");
+            for i in 0..(MAX_LOG_ENTRIES as i64 + 5) {
+                conn.execute(
+                    "INSERT INTO diagnostic_logs (ts, run_id, scope, level, event, message, metadata_json, fingerprint, suppressed_count)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
+                    params![
+                        1_700_000_000i64 + i,
+                        format!("run-{}", i),
+                        "refresh",
+                        "info",
+                        "refresh_completed",
+                        format!("message-{}", i),
+                        "{}",
+                        format!("fp-{}", i),
+                    ],
+                )
+                .expect("seed diagnostic row");
+            }
+        }
+
+        db.insert_diagnostic_log(sample_diag_event("classify_completed", "categorization"))
+            .expect("trigger truncation");
+
+        let logs = db
+            .get_diagnostic_logs(MAX_LOG_ENTRIES + 20, None)
+            .expect("fetch logs");
+        assert_eq!(logs.len(), MAX_LOG_ENTRIES);
+        for pair in logs.windows(2) {
+            assert!(pair[0].ts >= pair[1].ts);
+        }
+    }
+
+    #[test]
+    fn diagnostic_logs_support_scope_filter_and_clear() {
+        let db = Database::new(":memory:").expect("db init");
+        db.insert_diagnostic_log(sample_diag_event("refresh_completed", "refresh"))
+            .expect("insert refresh");
+        db.insert_diagnostic_log(sample_diag_event("classify_completed", "categorization"))
+            .expect("insert categorization");
+
+        let refresh_logs = db
+            .get_diagnostic_logs(10, Some("refresh"))
+            .expect("refresh logs");
+        assert_eq!(refresh_logs.len(), 1);
+        assert_eq!(refresh_logs[0].scope, "refresh");
+
+        let cat_logs = db
+            .get_diagnostic_logs(10, Some("categorization"))
+            .expect("cat logs");
+        assert_eq!(cat_logs.len(), 1);
+        assert_eq!(cat_logs[0].scope, "categorization");
+
+        db.clear_diagnostic_logs().expect("clear logs");
+        assert!(db
+            .get_diagnostic_logs(10, None)
+            .expect("logs after clear")
+            .is_empty());
     }
 }
