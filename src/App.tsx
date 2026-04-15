@@ -24,6 +24,8 @@ function App() {
     selectionAnchor,
     loading,
     refreshing,
+    refreshElapsedSeconds,
+    refreshIsSlow,
     lastRefreshResult,
     setSelectedIndex,
     setSelectionAnchor,
@@ -246,6 +248,8 @@ function App() {
         counts={counts}
         categories={categories}
         refreshing={refreshing}
+        refreshElapsedSeconds={refreshElapsedSeconds}
+        refreshIsSlow={refreshIsSlow}
         onSwitchTab={switchTab}
         onRefresh={doRefresh}
         onOpenSettings={() => setShowSettings(true)}

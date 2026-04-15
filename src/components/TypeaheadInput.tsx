@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { searchSlackUsers, searchSlackChannels } from "../lib/tauri";
+import { useLoadingTimer } from "../hooks/useLoadingTimer";
 
 // Typeahead dropdown item
 export interface TypeaheadItem {
@@ -8,6 +9,8 @@ export interface TypeaheadItem {
   sublabel: string;
   type: "user" | "channel" | "to";
 }
+
+type SearchState = "idle" | "loading" | "error";
 
 export function TypeaheadInput({
   placeholder,
@@ -21,8 +24,23 @@ export function TypeaheadInput({
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [searchState, setSearchState] = useState<SearchState>("idle");
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [retryQuery, setRetryQuery] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchCounterRef = useRef(0);
+  const { isSlow } = useLoadingTimer(searchState === "loading");
+
+  const clearSearchFeedback = useCallback(() => {
+    setSearchState("idle");
+    setSearchError(null);
+    setRetryQuery(null);
+  }, []);
+
+  const cancelPendingSearch = useCallback(() => {
+    searchCounterRef.current += 1;
+    clearSearchFeedback();
+  }, [clearSearchFeedback]);
 
   const updateDropdownPos = useCallback(() => {
     if (inputRef.current) {
@@ -31,11 +49,12 @@ export function TypeaheadInput({
     }
   }, []);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string): Promise<TypeaheadItem[]> => {
     if (q.length < 2) {
       setResults([]);
       setShowDropdown(false);
-      return;
+      cancelPendingSearch();
+      return [];
     }
 
     // Handle to: prefix — freeform, no API search needed
@@ -43,20 +62,35 @@ export function TypeaheadInput({
       // Don't show dropdown for to: — user submits with Enter
       setResults([]);
       setShowDropdown(false);
-      return;
+      cancelPendingSearch();
+      return [];
     }
 
     const prefix = q[0];
     const searchTerm = q.slice(1);
-    if (searchTerm.length === 0) return;
+    if (searchTerm.trim().length === 0) {
+      setResults([]);
+      setShowDropdown(false);
+      cancelPendingSearch();
+      return [];
+    }
+    if (prefix !== "@" && prefix !== "#") {
+      setResults([]);
+      setShowDropdown(false);
+      cancelPendingSearch();
+      return [];
+    }
 
     const thisSearch = ++searchCounterRef.current;
+    setSearchState("loading");
+    setSearchError(null);
+    setRetryQuery(q);
 
     try {
       let newResults: TypeaheadItem[] = [];
       if (prefix === "@") {
         const users = await searchSlackUsers(searchTerm);
-        if (searchCounterRef.current !== thisSearch) return;
+        if (searchCounterRef.current !== thisSearch) return [];
         newResults = users.map((u) => ({
           id: u.id,
           label: u.real_name || u.name,
@@ -65,28 +99,32 @@ export function TypeaheadInput({
         }));
       } else if (prefix === "#") {
         const channels = await searchSlackChannels(searchTerm);
-        if (searchCounterRef.current !== thisSearch) return;
+        if (searchCounterRef.current !== thisSearch) return [];
         newResults = channels.map((c) => ({
           id: c.id,
           label: c.name,
           sublabel: c.is_private ? "private" : "public",
           type: "channel" as const,
         }));
-      } else {
-        setResults([]);
-        setShowDropdown(false);
-        return;
       }
       setResults(newResults);
       updateDropdownPos();
       setShowDropdown(newResults.length > 0);
       setHighlightIndex(0);
+      setSearchState("idle");
+      setSearchError(null);
       return newResults;
     } catch (e) {
+      if (searchCounterRef.current !== thisSearch) return [];
       console.error("Search failed:", e);
+      setResults([]);
+      setShowDropdown(false);
+      setSearchState("error");
+      setSearchError("Search failed. Check your connection and retry.");
+      setRetryQuery(q);
       return [];
     }
-  }, [updateDropdownPos]);
+  }, [cancelPendingSearch, updateDropdownPos]);
 
   const handleChange = (value: string) => {
     setQuery(value);
@@ -98,7 +136,21 @@ export function TypeaheadInput({
     setQuery("");
     setResults([]);
     setShowDropdown(false);
+    cancelPendingSearch();
     inputRef.current?.focus();
+  };
+
+  const retrySearch = useCallback(() => {
+    const queryToRetry = query.trim().length > 0 ? query : retryQuery;
+    if (!queryToRetry) return;
+    void doSearch(queryToRetry);
+  }, [doSearch, query, retryQuery]);
+
+  const handleBlur = () => {
+    setTimeout(() => {
+      setShowDropdown(false);
+      cancelPendingSearch();
+    }, 200);
   };
 
   const handleKeyDown = async (e: React.KeyboardEvent) => {
@@ -158,16 +210,52 @@ export function TypeaheadInput({
 
   return (
     <div className="typeahead-container">
-      <input
-        ref={inputRef}
-        type="text"
-        className="settings-input"
-        value={query}
-        onChange={(e) => handleChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-        placeholder={placeholder}
-      />
+      <div className="typeahead-input-shell">
+        <input
+          ref={inputRef}
+          type="text"
+          className="settings-input typeahead-input"
+          value={query}
+          onChange={(e) => handleChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          placeholder={placeholder}
+        />
+        <span className="typeahead-indicator-slot" aria-hidden="true">
+          {searchState === "loading" && <span className="typeahead-spinner" />}
+        </span>
+      </div>
+      <div className="typeahead-status-row" aria-live="polite">
+        {searchState === "error" ? (
+          <>
+            <span className="typeahead-status-error">
+              {searchError}
+            </span>
+            <button
+              type="button"
+              className="typeahead-retry-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={retrySearch}
+            >
+              Retry
+            </button>
+          </>
+        ) : searchState === "loading" && isSlow ? (
+          <>
+            <span className="typeahead-status-slow">Still searching...</span>
+            <button
+              type="button"
+              className="typeahead-retry-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={retrySearch}
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <span className="typeahead-status-placeholder">&nbsp;</span>
+        )}
+      </div>
       {showDropdown && results.length > 0 && dropdownPos && (
         <div
           className="typeahead-dropdown"

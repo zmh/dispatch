@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   CodexStatus,
   Settings,
@@ -15,6 +15,7 @@ import {
   getCodexStatus,
 } from "../lib/tauri";
 import { TypeaheadInput, TypeaheadItem } from "./TypeaheadInput";
+import { useLoadingTimer } from "../hooks/useLoadingTimer";
 
 interface OnboardingWizardProps {
   onComplete: () => void;
@@ -23,6 +24,8 @@ interface OnboardingWizardProps {
 
 const TOKEN_CMD = `Object.entries(JSON.parse(localStorage.localConfig_v2).teams).forEach(([,t])=>console.log(t.name,t.token))`;
 const COOKIE_CMD = `document.cookie.split("; ").find(c=>c.startsWith("d=")).slice(2)`;
+
+type WorkspaceLoadPhase = "idle" | "loading_cache" | "loading_suggestions" | "ready" | "error";
 
 function CopyBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
@@ -55,39 +58,88 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   const [connectionInfo, setConnectionInfo] = useState<SlackConnectionInfo | null>(null);
   const [suggestedChannels, setSuggestedChannels] = useState<SlackChannel[]>([]);
   const [suggestedPeople, setSuggestedPeople] = useState<SlackUser[]>([]);
-  const [cacheReady, setCacheReady] = useState(false);
+  const [workspaceLoadPhase, setWorkspaceLoadPhase] = useState<WorkspaceLoadPhase>("idle");
+  const [workspaceLoadError, setWorkspaceLoadError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingAi, setSavingAi] = useState(false);
   const [loadingCodexStatus, setLoadingCodexStatus] = useState(false);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workspaceLoadSeqRef = useRef(0);
+  const {
+    elapsedSeconds: cacheLoadElapsedSeconds,
+    isSlow: cacheLoadIsSlow,
+  } = useLoadingTimer(workspaceLoadPhase === "loading_cache");
+  const {
+    elapsedSeconds: suggestionsLoadElapsedSeconds,
+    isSlow: suggestionsLoadIsSlow,
+  } = useLoadingTimer(workspaceLoadPhase === "loading_suggestions");
 
-  // Load suggestions when cache is ready and we're on step 2
-  useEffect(() => {
-    if (step === 2 && cacheReady) {
-      getOnboardingSuggestions().then((suggestions) => {
-        setSuggestedPeople(suggestions.suggested_people.slice(0, 10));
-        setSuggestedChannels(suggestions.suggested_channels.slice(0, 15));
-        // Pre-select top 3 of each (only if no filters selected yet)
-        if (filters.length === 0) {
-          const preselected: SlackFilter[] = [];
-          for (const u of suggestions.suggested_people.slice(0, 3)) {
-            preselected.push({ filter_type: "user", id: u.id, display_name: u.real_name || u.name });
-          }
-          for (const ch of suggestions.suggested_channels.slice(0, 3)) {
-            preselected.push({ filter_type: "channel", id: ch.id, display_name: ch.name });
-          }
-          setFilters(preselected);
-        }
-      }).catch(() => {
-        // Fallback to cache search if suggestions API fails
-        searchSlackChannels("").then((channels) => {
-          setSuggestedChannels(channels.slice(0, 15));
-        }).catch(() => {});
-      });
+  const applyWorkspaceSuggestions = useCallback((people: SlackUser[], channels: SlackChannel[]) => {
+    const topPeople = people.slice(0, 10);
+    const topChannels = channels.slice(0, 15);
+    setSuggestedPeople(topPeople);
+    setSuggestedChannels(topChannels);
+    setFilters((prev) => {
+      if (prev.length > 0) return prev;
+      const preselected: SlackFilter[] = [];
+      for (const u of topPeople.slice(0, 3)) {
+        preselected.push({ filter_type: "user", id: u.id, display_name: u.real_name || u.name });
+      }
+      for (const ch of topChannels.slice(0, 3)) {
+        preselected.push({ filter_type: "channel", id: ch.id, display_name: ch.name });
+      }
+      return preselected;
+    });
+  }, []);
+
+  const loadWorkspaceData = useCallback(async () => {
+    if (!slackToken || !slackCookie) return;
+
+    const loadSeq = ++workspaceLoadSeqRef.current;
+    setWorkspaceLoadError(null);
+    setWorkspaceLoadPhase("loading_cache");
+
+    try {
+      await populateSlackCache();
+      if (workspaceLoadSeqRef.current !== loadSeq) return;
+
+      setWorkspaceLoadPhase("loading_suggestions");
+      try {
+        const suggestions = await getOnboardingSuggestions();
+        if (workspaceLoadSeqRef.current !== loadSeq) return;
+        applyWorkspaceSuggestions(suggestions.suggested_people, suggestions.suggested_channels);
+        setWorkspaceLoadPhase("ready");
+      } catch (suggestionsError) {
+        console.error("Failed to load onboarding suggestions:", suggestionsError);
+        const channels = await searchSlackChannels("");
+        if (workspaceLoadSeqRef.current !== loadSeq) return;
+        applyWorkspaceSuggestions([], channels);
+        setWorkspaceLoadPhase("ready");
+      }
+    } catch (e) {
+      if (workspaceLoadSeqRef.current !== loadSeq) return;
+      console.error("Workspace load failed:", e);
+      setWorkspaceLoadError("Couldn't load your workspace data.");
+      setWorkspaceLoadPhase("error");
     }
-  }, [step, cacheReady]);
+  }, [applyWorkspaceSuggestions, slackCookie, slackToken]);
+
+  useEffect(() => {
+    if (step !== 2) return;
+    if (workspaceLoadPhase !== "idle") return;
+    if (!connectionInfo) return;
+    void loadWorkspaceData();
+  }, [step, workspaceLoadPhase, connectionInfo, loadWorkspaceData]);
+
+  useEffect(() => {
+    if (step === 2) return;
+    workspaceLoadSeqRef.current += 1;
+    setWorkspaceLoadPhase((prev) =>
+      prev === "loading_cache" || prev === "loading_suggestions" ? "idle" : prev
+    );
+  }, [step]);
 
   useEffect(() => {
     if (step !== 3 || aiProvider !== "codex") return;
@@ -126,6 +178,8 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   const handleTestConnection = async () => {
     setTesting(true);
     setError(null);
+    setWorkspaceLoadError(null);
+    setWorkspaceLoadPhase("idle");
 
     try {
       // Save credentials first
@@ -140,10 +194,8 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
       const info = await testSlackConnection(slackToken, slackCookie);
       setConnectionInfo(info);
 
-      // Populate cache in background
-      populateSlackCache().then(() => {
-        setCacheReady(true);
-      }).catch(console.error);
+      // Start workspace cache + suggestions load in background
+      void loadWorkspaceData();
 
       // Auto-advance after showing success
       autoAdvanceRef.current = setTimeout(() => setStep(2), 1200);
@@ -245,10 +297,17 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
   const tokenValid = slackToken.startsWith("xoxc-");
   const cookieValid = slackCookie.startsWith("xoxd-");
   const canConnect = slackToken.length > 0 && slackCookie.length > 0;
+  const workspaceIsLoading =
+    workspaceLoadPhase === "loading_cache" || workspaceLoadPhase === "loading_suggestions";
+  const workspaceLoadElapsedSeconds =
+    workspaceLoadPhase === "loading_cache" ? cacheLoadElapsedSeconds : suggestionsLoadElapsedSeconds;
+  const workspaceLoadIsSlow =
+    workspaceLoadPhase === "loading_cache" ? cacheLoadIsSlow : suggestionsLoadIsSlow;
 
   // Cleanup auto-advance timer
   useEffect(() => {
     return () => {
+      workspaceLoadSeqRef.current += 1;
       if (autoAdvanceRef.current) clearTimeout(autoAdvanceRef.current);
     };
   }, []);
@@ -304,7 +363,16 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
                     type="password"
                     className="settings-input"
                     value={slackToken}
-                    onChange={(e) => { setSlackToken(e.target.value); setError(null); setConnectionInfo(null); }}
+                    onChange={(e) => {
+                      workspaceLoadSeqRef.current += 1;
+                      setSlackToken(e.target.value);
+                      setError(null);
+                      setConnectionInfo(null);
+                      setSuggestedPeople([]);
+                      setSuggestedChannels([]);
+                      setWorkspaceLoadError(null);
+                      setWorkspaceLoadPhase("idle");
+                    }}
                     placeholder="xoxc-..."
                     autoFocus
                   />
@@ -325,7 +393,16 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
                     type="password"
                     className="settings-input"
                     value={slackCookie}
-                    onChange={(e) => { setSlackCookie(e.target.value); setError(null); setConnectionInfo(null); }}
+                    onChange={(e) => {
+                      workspaceLoadSeqRef.current += 1;
+                      setSlackCookie(e.target.value);
+                      setError(null);
+                      setConnectionInfo(null);
+                      setSuggestedPeople([]);
+                      setSuggestedChannels([]);
+                      setWorkspaceLoadError(null);
+                      setWorkspaceLoadPhase("idle");
+                    }}
                     placeholder="xoxd-..."
                   />
                   {slackCookie.length > 0 && (
@@ -424,9 +501,35 @@ export function OnboardingWizard({ onComplete, initialSettings }: OnboardingWiza
                 </div>
               )}
 
-              {!cacheReady && connectionInfo && (
-                <div className="onboarding-loading">Loading your workspace...</div>
-              )}
+              <div className="onboarding-loading-row" aria-live="polite">
+                {(workspaceLoadPhase === "loading_cache" || workspaceLoadPhase === "loading_suggestions") && (
+                  <span className="onboarding-loading">
+                    {workspaceLoadPhase === "loading_cache"
+                      ? `Loading your workspace... ${workspaceLoadElapsedSeconds}s`
+                      : `Loading suggestions... ${workspaceLoadElapsedSeconds}s`}
+                    {workspaceLoadIsSlow ? " · slow" : ""}
+                  </span>
+                )}
+                {workspaceLoadPhase === "error" && (
+                  <span className="onboarding-loading onboarding-loading-error">
+                    {workspaceLoadError || "Couldn't load your workspace data."}
+                  </span>
+                )}
+                {(workspaceLoadPhase === "error" || (workspaceIsLoading && workspaceLoadIsSlow)) && (
+                  <button
+                    type="button"
+                    className="onboarding-loading-action"
+                    onClick={() => {
+                      void loadWorkspaceData();
+                    }}
+                  >
+                    Retry workspace load
+                  </button>
+                )}
+                {!workspaceIsLoading && workspaceLoadPhase !== "error" && (
+                  <span className="onboarding-loading-placeholder">&nbsp;</span>
+                )}
+              </div>
 
               <div className="onboarding-search-section">
                 <TypeaheadInput

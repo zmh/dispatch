@@ -11,6 +11,7 @@ import {
   populateSlackCache,
 } from "../lib/tauri";
 import { applyTheme } from "../hooks/useMessages";
+import { useLoadingTimer } from "../hooks/useLoadingTimer";
 import { TypeaheadInput, TypeaheadItem } from "./TypeaheadInput";
 
 const DEFAULT_DESCRIPTIONS: Record<string, string> = {
@@ -90,8 +91,13 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
   const [newCategoryName, setNewCategoryName] = useState("");
   const [ruleInputs, setRuleInputs] = useState<Record<string, string>>({});
   const [refreshingCache, setRefreshingCache] = useState(false);
+  const [refreshCacheError, setRefreshCacheError] = useState<string | null>(null);
   const [loadingCodexStatus, setLoadingCodexStatus] = useState(false);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const {
+    elapsedSeconds: cacheRefreshElapsedSeconds,
+    isSlow: cacheRefreshIsSlow,
+  } = useLoadingTimer(refreshingCache);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reclassifyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reclassifyQueuedRef = useRef(false);
@@ -741,18 +747,35 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
                     className="setup-wizard-btn"
                     disabled={refreshingCache}
                     onClick={async () => {
+                      setRefreshCacheError(null);
                       setRefreshingCache(true);
                       try {
                         await populateSlackCache();
                       } catch (e) {
                         console.error("Cache refresh failed:", e);
+                        setRefreshCacheError("Couldn't refresh workspace cache. Use the button to retry.");
                       } finally {
                         setRefreshingCache(false);
                       }
                     }}
                   >
-                    {refreshingCache ? "Refreshing..." : "Refresh Workspace Cache"}
+                    <span className="loading-fixed-label loading-fixed-label-settings">
+                      {refreshingCache
+                        ? `Refreshing... ${cacheRefreshElapsedSeconds}s${cacheRefreshIsSlow ? " · slow" : ""}`
+                        : "Refresh Workspace Cache"}
+                    </span>
                   </button>
+                </div>
+                <div className="settings-loading-row" aria-live="polite">
+                  {refreshingCache && cacheRefreshIsSlow && (
+                    <span className="settings-loading-text">Still refreshing workspace cache...</span>
+                  )}
+                  {!refreshingCache && refreshCacheError && (
+                    <span className="settings-loading-error">{refreshCacheError}</span>
+                  )}
+                  {!refreshingCache && !refreshCacheError && (
+                    <span className="settings-loading-placeholder">&nbsp;</span>
+                  )}
                 </div>
               </div>
             )}
