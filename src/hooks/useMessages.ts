@@ -18,6 +18,7 @@ import {
   RefreshResult,
   setWindowTheme,
 } from "../lib/tauri";
+import { useLoadingTimer } from "./useLoadingTimer";
 
 const STARRED_CATEGORY: Category = { name: "starred", builtin: true, position: 0.5 };
 
@@ -69,6 +70,10 @@ export function useMessages() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshResult, setLastRefreshResult] = useState<RefreshResult | null>(null);
+  const {
+    elapsedSeconds: refreshElapsedSeconds,
+    isSlow: refreshIsSlow,
+  } = useLoadingTimer(refreshing);
   const refreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const afterArchiveRef = useRef<string>("newer");
   const pendingCursorTarget = useRef<string | null>(null);
@@ -148,13 +153,32 @@ export function useMessages() {
     const run = (async () => {
       setRefreshing(true);
       try {
-        const result = await refreshInbox();
+        let result = await refreshInbox();
         setLastRefreshResult(result);
-        if (!result.in_progress) {
-          await fetchMessages();
+
+        while (result.in_progress) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 1000);
+          });
+          result = await refreshInbox();
+          setLastRefreshResult(result);
         }
+
+        await fetchMessages();
       } catch (e) {
         console.error("Failed to refresh:", e);
+        const reason = e instanceof Error && e.message ? ` ${e.message}` : "";
+        setLastRefreshResult({
+          new_messages: 0,
+          classified: 0,
+          pending_classification: 0,
+          in_progress: false,
+          slack_fetch_ms: 0,
+          db_write_ms: 0,
+          classify_ms: 0,
+          avatar_ms: 0,
+          errors: [`Refresh failed.${reason}`],
+        });
       } finally {
         setRefreshing(false);
         refreshPromiseRef.current = null;
@@ -421,6 +445,8 @@ export function useMessages() {
     selectionAnchor,
     loading,
     refreshing,
+    refreshElapsedSeconds,
+    refreshIsSlow,
     lastRefreshResult,
     setSelectedIndex,
     setSelectionAnchor,

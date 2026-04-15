@@ -344,6 +344,16 @@ body {
   gap: 5px;
 }
 
+.loading-fixed-label {
+  display: inline-block;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.loading-fixed-label-refresh {
+  min-width: 27ch;
+}
+
 .tab-action svg {
   vertical-align: middle;
   flex-shrink: 0;
@@ -1397,6 +1407,73 @@ body {
   position: relative;
 }
 
+.typeahead-input-shell {
+  position: relative;
+}
+
+.typeahead-input {
+  padding-right: 32px;
+}
+
+.typeahead-indicator-slot {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.typeahead-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-muted);
+  animation: spin 0.9s linear infinite;
+}
+
+.typeahead-status-row {
+  min-height: 16px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.typeahead-status-placeholder {
+  color: transparent;
+}
+
+.typeahead-status-error {
+  color: var(--error);
+}
+
+.typeahead-status-slow {
+  color: var(--text-muted);
+}
+
+.typeahead-retry-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.typeahead-retry-btn:hover {
+  color: var(--accent-dim);
+  text-decoration: underline;
+}
+
 .typeahead-dropdown {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2118,7 +2195,38 @@ body {
 .onboarding-loading {
   font-size: 12px;
   color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.onboarding-loading-row {
+  min-height: 18px;
   margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-loading-error {
+  color: var(--error);
+}
+
+.onboarding-loading-action {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.onboarding-loading-action:hover {
+  color: var(--accent-dim);
+  text-decoration: underline;
+}
+
+.onboarding-loading-placeholder {
+  color: transparent;
 }
 
 .onboarding-search-section {
@@ -2186,7 +2294,34 @@ body {
   transition: color 0.15s, border-color 0.15s;
 }
 
+.loading-fixed-label-settings {
+  min-width: 28ch;
+  text-align: center;
+}
+
 .setup-wizard-btn:hover {
   color: var(--text);
   border-color: var(--text-dim);
+}
+
+.settings-loading-row {
+  min-height: 16px;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.settings-loading-text {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.settings-loading-error {
+  font-size: 11px;
+  color: var(--error);
+}
+
+.settings-loading-placeholder {
+  color: transparent;
+  font-size: 11px;
 }
