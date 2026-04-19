@@ -766,32 +766,15 @@ body {
   align-items: center;
 }
 
-.snooze-option:hover {
+.snooze-option:hover,
+.snooze-option--selected {
   background: var(--bg-hover);
   border-color: var(--accent);
-}
-
-.snooze-option-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .snooze-option-detail {
   color: var(--text-muted);
   font-size: 12px;
-}
-
-.snooze-option kbd {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 5px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
-  min-width: 16px;
-  text-align: center;
 }
 
 .snooze-divider {
