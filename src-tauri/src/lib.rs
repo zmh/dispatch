@@ -24,6 +24,39 @@ fn beta_release_channel_enabled(db: &storage::Database) -> bool {
         .unwrap_or(false)
 }
 
+async fn check_for_updates(handle: tauri::AppHandle, db: Arc<storage::Database>) {
+    let use_beta_channel = beta_release_channel_enabled(&db);
+    let updater = match updater_for_release_channel(&handle, use_beta_channel) {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("Updater init failed: {}", e);
+            let _ = handle.emit("update-error", e);
+            return;
+        }
+    };
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let _ = handle.emit("update-available", update.version.clone());
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(_) => {
+                    let _ = handle.emit("update-installed", update.version.clone());
+                }
+                Err(e) => {
+                    eprintln!("Failed to install update: {}", e);
+                    let _ = handle.emit("update-error", e.to_string());
+                }
+            }
+        }
+        Ok(None) => {
+            let _ = handle.emit("no-update", ());
+        }
+        Err(e) => {
+            eprintln!("Update check failed: {}", e);
+            let _ = handle.emit("update-error", e.to_string());
+        }
+    }
+}
+
 fn updater_for_release_channel<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     use_beta_channel: bool,
@@ -153,36 +186,7 @@ pub fn run() {
                     let db = Arc::clone(&app_handle.state::<AppState>().db);
                     tauri::async_runtime::spawn(async move {
                         let _ = handle.emit("update-checking", ());
-                        let use_beta_channel = beta_release_channel_enabled(&db);
-                        let updater = match updater_for_release_channel(&handle, use_beta_channel) {
-                            Ok(u) => u,
-                            Err(e) => {
-                                eprintln!("Updater init failed: {}", e);
-                                let _ = handle.emit("update-error", e);
-                                return;
-                            }
-                        };
-                        match updater.check().await {
-                            Ok(Some(update)) => {
-                                let _ = handle.emit("update-available", update.version.clone());
-                                match update.download_and_install(|_, _| {}, || {}).await {
-                                    Ok(_) => {
-                                        let _ = handle.emit("update-installed", update.version.clone());
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to install update: {}", e);
-                                        let _ = handle.emit("update-error", e.to_string());
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                let _ = handle.emit("no-update", ());
-                            }
-                            Err(e) => {
-                                eprintln!("Update check failed: {}", e);
-                                let _ = handle.emit("update-error", e.to_string());
-                            }
-                        }
+                        check_for_updates(handle, db).await;
                     });
                 }
             });
@@ -201,6 +205,18 @@ pub fn run() {
                     let _: () = msg_send![ns_app, setApplicationIconImage: image];
                 }
             }
+
+            // Auto-check for updates on launch and every 24 hours
+            let update_handle = app.handle().clone();
+            let update_db = Arc::clone(&app.state::<AppState>().db);
+            tauri::async_runtime::spawn(async move {
+                // Brief delay to let the app finish initializing
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                loop {
+                    check_for_updates(update_handle.clone(), Arc::clone(&update_db)).await;
+                    tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+                }
+            });
 
             // Background snooze checker: every 30s, unsnooze due messages and notify
             let db_for_snooze = Arc::clone(&app.state::<AppState>().db);
