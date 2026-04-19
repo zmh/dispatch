@@ -658,6 +658,17 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
                 ))}
               </div>
             </div>
+
+            {onRunSetup && (
+              <div className="settings-row-ia">
+                <span className="settings-row-label"></span>
+                <div className="settings-row-control">
+                  <button className="setup-wizard-btn" onClick={handleRunSetupClick}>
+                    Run Setup Wizard...
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           )}
 
@@ -776,77 +787,63 @@ export function Settings({ onClose, onCategoriesChanged, onMessagesChanged, onRe
               <div className="settings-row-ia">
                 <span className="settings-row-label">Codex status:</span>
                 <div className="settings-row-control">
-                  <div className="settings-hint-text" style={{ marginBottom: 8 }}>
+                  <div className="settings-hint-text">
                     {loadingCodexStatus
                       ? "Checking Codex login..."
                       : codexStatus
-                        ? codexStatus.message
+                        ? <>{codexStatus.message} · <span className="settings-copy-link" onClick={() => void refreshCodexStatus()}>Refresh</span></>
                         : "Status unavailable"}
                   </div>
                   {codexStatus && (
-                    <div className="settings-hint-text" style={{ marginBottom: 8 }}>
+                    <div className="settings-hint-text">
                       Installed: {codexStatus.installed ? "yes" : "no"} · Authenticated:{" "}
                       {codexStatus.authenticated ? "yes" : "no"} · Mode:{" "}
                       {codexStatus.auth_mode || "unknown"} · Subscription:{" "}
                       {codexStatus.has_codex_subscription ? "yes" : "no"}
                     </div>
                   )}
-                  <button
-                    className="setup-wizard-btn"
-                    onClick={() => {
-                      void refreshCodexStatus();
-                    }}
-                    disabled={loadingCodexStatus}
-                  >
-                    {loadingCodexStatus ? "Checking..." : "Refresh Codex Status"}
-                  </button>
                 </div>
               </div>
             )}
 
-            {onRunSetup && (
-              <div className="settings-row-ia">
-                <span className="settings-row-label"></span>
-                <div className="settings-row-control" style={{ display: "flex", gap: 8 }}>
-                  <button className="setup-wizard-btn" onClick={handleRunSetupClick}>
-                    Run Setup Wizard...
-                  </button>
-                  <button
-                    className="setup-wizard-btn"
-                    disabled={refreshingCache}
-                    onClick={async () => {
-                      setRefreshCacheError(null);
-                      setRefreshingCache(true);
-                      try {
-                        await populateSlackCache();
-                      } catch (e) {
-                        console.error("Cache refresh failed:", e);
-                        setRefreshCacheError("Couldn't refresh workspace cache. Use the button to retry.");
-                      } finally {
-                        setRefreshingCache(false);
-                      }
-                    }}
-                  >
-                    <span className="loading-fixed-label loading-fixed-label-settings">
-                      {refreshingCache
-                        ? `Refreshing... ${cacheRefreshElapsedSeconds}s${cacheRefreshIsSlow ? " · slow" : ""}`
-                        : "Refresh Workspace Cache"}
-                    </span>
-                  </button>
-                </div>
-                <div className="settings-loading-row" aria-live="polite">
-                  {refreshingCache && cacheRefreshIsSlow && (
-                    <span className="settings-loading-text">Still refreshing workspace cache...</span>
-                  )}
-                  {!refreshingCache && refreshCacheError && (
-                    <span className="settings-loading-error">{refreshCacheError}</span>
-                  )}
-                  {!refreshingCache && !refreshCacheError && (
-                    <span className="settings-loading-placeholder">&nbsp;</span>
-                  )}
-                </div>
+            <div className="settings-row-ia">
+              <span className="settings-row-label"></span>
+              <div className="settings-row-control" style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="setup-wizard-btn"
+                  disabled={refreshingCache}
+                  onClick={async () => {
+                    setRefreshCacheError(null);
+                    setRefreshingCache(true);
+                    try {
+                      await populateSlackCache();
+                    } catch (e) {
+                      console.error("Cache refresh failed:", e);
+                      setRefreshCacheError("Couldn't refresh workspace cache. Use the button to retry.");
+                    } finally {
+                      setRefreshingCache(false);
+                    }
+                  }}
+                >
+                  <span className="loading-fixed-label loading-fixed-label-settings">
+                    {refreshingCache
+                      ? `Refreshing... ${cacheRefreshElapsedSeconds}s${cacheRefreshIsSlow ? " · slow" : ""}`
+                      : "Refresh Workspace Cache"}
+                  </span>
+                </button>
               </div>
-            )}
+              <div className="settings-loading-row" aria-live="polite">
+                {refreshingCache && cacheRefreshIsSlow && (
+                  <span className="settings-loading-text">Still refreshing workspace cache...</span>
+                )}
+                {!refreshingCache && refreshCacheError && (
+                  <span className="settings-loading-error">{refreshCacheError}</span>
+                )}
+                {!refreshingCache && !refreshCacheError && (
+                  <span className="settings-loading-placeholder">&nbsp;</span>
+                )}
+              </div>
+            </div>
 
           </div>
           )}
