@@ -91,3 +91,21 @@ jobs:
           releaseBody: ${{ steps.release_meta.outputs.release_body }}
           releaseDraft: false
           prerelease: ${{ steps.release_meta.outputs.prerelease }}
+
+      - name: Update beta release with latest assets
+        if: github.ref_name != 'beta' && contains(github.ref_name, 'beta')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Ensure the beta release exists
+          if ! gh release view beta >/dev/null 2>&1; then
+            gh release create beta --prerelease \
+              --title "Dispatch Beta" \
+              --notes "Beta channel build for testing before production release."
+          fi
+
+          # Download latest.json and update artifacts from the versioned release
+          for asset in latest.json Dispatch_aarch64.app.tar.gz Dispatch_aarch64.app.tar.gz.sig; do
+            gh release download "${{ github.ref_name }}" --pattern "${asset}" --dir /tmp/beta-assets --clobber
+            gh release upload beta "/tmp/beta-assets/${asset}" --clobber
+          done
