@@ -91,6 +91,7 @@ export function SnoozeDialog({ onSnooze, onClose }: SnoozeDialogProps) {
   const options = getSnoozeOptions();
   const [customInput, setCustomInput] = useState("");
   const [parsedResult, setParsedResult] = useState<{ timestamp: number; label: string } | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -109,21 +110,30 @@ export function SnoozeDialog({ onSnooze, onClose }: SnoozeDialogProps) {
         return;
       }
 
-      if (e.key === "Enter" && parsedResult) {
+      const isInputFocused = document.activeElement === inputRef.current;
+
+      if (e.key === "Enter") {
         e.preventDefault();
-        onSnooze(parsedResult.timestamp);
+        if (isInputFocused && parsedResult) {
+          onSnooze(parsedResult.timestamp);
+        } else if (!isInputFocused && selectedIndex >= 0 && selectedIndex < options.length) {
+          onSnooze(options[selectedIndex].until);
+        }
         return;
       }
 
-      // Number keys trigger presets when input is empty
-      const isInputFocused = document.activeElement === inputRef.current;
-      if (!isInputFocused || customInput === "") {
-        const num = parseInt(e.key);
-        if (num >= 1 && num <= options.length) {
-          e.preventDefault();
-          onSnooze(options[num - 1].until);
-          return;
-        }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (isInputFocused) return;
+        setSelectedIndex((prev) => Math.min(prev + 1, options.length - 1));
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (isInputFocused) return;
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+        return;
       }
 
       // Any printable character focuses the input
@@ -132,13 +142,12 @@ export function SnoozeDialog({ onSnooze, onClose }: SnoozeDialogProps) {
         e.key.length === 1 &&
         !e.metaKey &&
         !e.ctrlKey &&
-        !e.altKey &&
-        !/\d/.test(e.key)
+        !e.altKey
       ) {
         inputRef.current?.focus();
       }
     },
-    [onClose, onSnooze, parsedResult, customInput, options]
+    [onClose, onSnooze, parsedResult, customInput, options, selectedIndex]
   );
 
   useEffect(() => {
@@ -154,14 +163,12 @@ export function SnoozeDialog({ onSnooze, onClose }: SnoozeDialogProps) {
           {options.map((opt, i) => (
             <button
               key={opt.label}
-              className="snooze-option"
+              className={`snooze-option${i === selectedIndex ? " snooze-option--selected" : ""}`}
               onClick={() => onSnooze(opt.until)}
+              onMouseEnter={() => setSelectedIndex(i)}
             >
               <span>{opt.label}</span>
-              <span className="snooze-option-right">
-                <span className="snooze-option-detail">{opt.detail}</span>
-                <kbd>{i + 1}</kbd>
-              </span>
+              <span className="snooze-option-detail">{opt.detail}</span>
             </button>
           ))}
         </div>
