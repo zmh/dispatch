@@ -1013,7 +1013,7 @@ body {
   font-size: 13px;
   color: var(--text);
   flex-shrink: 0;
-  padding-top: 8px;
+  padding-top: 2px;
 }
 
 .settings-row-control {
